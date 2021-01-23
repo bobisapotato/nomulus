@@ -21,9 +21,9 @@ import static google.registry.model.registry.Registry.TldState.START_DATE_SUNRIS
 import static google.registry.testing.AppEngineExtension.makeRegistrar1;
 import static google.registry.testing.CertificateSamples.SAMPLE_CERT;
 import static google.registry.testing.CertificateSamples.SAMPLE_CERT_HASH;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.persistPremiumList;
-import static google.registry.testing.DatastoreHelper.persistSimpleResource;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.persistPremiumList;
+import static google.registry.testing.DatabaseHelper.persistSimpleResource;
 import static google.registry.util.DateTimeUtils.START_OF_TIME;
 import static org.joda.money.CurrencyUnit.USD;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -157,25 +157,15 @@ public final class OteAccountBuilderTest {
   }
 
   @Test
-  void testCreateOteEntities_setCertificateHash() {
-    OteAccountBuilder.forClientId("myclientid")
-        .setCertificateHash(SAMPLE_CERT_HASH)
-        .buildAndPersist();
-
-    assertThat(Registrar.loadByClientId("myclientid-3").get().getClientCertificateHash())
-        .isEqualTo(SAMPLE_CERT_HASH);
-  }
-
-  @Test
   void testCreateOteEntities_setCertificate() {
     OteAccountBuilder.forClientId("myclientid")
         .setCertificate(SAMPLE_CERT, new SystemClock().nowUtc())
         .buildAndPersist();
 
     assertThat(Registrar.loadByClientId("myclientid-3").get().getClientCertificateHash())
-        .isEqualTo(SAMPLE_CERT_HASH);
+        .hasValue(SAMPLE_CERT_HASH);
     assertThat(Registrar.loadByClientId("myclientid-3").get().getClientCertificate())
-        .isEqualTo(SAMPLE_CERT);
+        .hasValue(SAMPLE_CERT);
   }
 
   @Test

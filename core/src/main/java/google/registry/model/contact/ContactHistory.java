@@ -14,7 +14,6 @@
 
 package google.registry.model.contact;
 
-import com.google.common.collect.ImmutableList;
 import com.googlecode.objectify.Key;
 import com.googlecode.objectify.annotation.EntitySubclass;
 import google.registry.model.ImmutableObject;
@@ -60,7 +59,9 @@ public class ContactHistory extends HistoryEntry implements SqlEntity {
   @Id
   @Access(AccessType.PROPERTY)
   public String getContactRepoId() {
-    return parent.getName();
+    // We need to handle null case here because Hibernate sometimes accesses this method before
+    // parent gets initialized
+    return parent == null ? null : parent.getName();
   }
 
   /** This method is private because it is only used by Hibernate. */
@@ -93,9 +94,9 @@ public class ContactHistory extends HistoryEntry implements SqlEntity {
   }
 
   /** Creates a {@link VKey} instance for this entity. */
+  @SuppressWarnings("unchecked")
   public VKey<ContactHistory> createVKey() {
-    return VKey.create(
-        ContactHistory.class, new ContactHistoryId(getContactRepoId(), getId()), Key.create(this));
+    return (VKey<ContactHistory>) createVKey(Key.create(this));
   }
 
   @PostLoad
@@ -109,12 +110,12 @@ public class ContactHistory extends HistoryEntry implements SqlEntity {
 
   // In Datastore, save as a HistoryEntry object regardless of this object's type
   @Override
-  public ImmutableList<DatastoreEntity> toDatastoreEntities() {
-    return ImmutableList.of(asHistoryEntry());
+  public Optional<DatastoreEntity> toDatastoreEntity() {
+    return Optional.of(asHistoryEntry());
   }
 
   /** Class to represent the composite primary key of {@link ContactHistory} entity. */
-  static class ContactHistoryId extends ImmutableObject implements Serializable {
+  public static class ContactHistoryId extends ImmutableObject implements Serializable {
 
     private String contactRepoId;
 
@@ -123,7 +124,7 @@ public class ContactHistory extends HistoryEntry implements SqlEntity {
     /** Hibernate requires this default constructor. */
     private ContactHistoryId() {}
 
-    ContactHistoryId(String contactRepoId, long id) {
+    public ContactHistoryId(String contactRepoId, long id) {
       this.contactRepoId = contactRepoId;
       this.id = id;
     }

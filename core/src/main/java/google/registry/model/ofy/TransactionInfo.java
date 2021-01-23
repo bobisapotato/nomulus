@@ -22,6 +22,7 @@ import static com.google.common.collect.Maps.toMap;
 import static google.registry.model.ofy.CommitLogBucket.getArbitraryBucketId;
 import static google.registry.model.ofy.ObjectifyService.ofy;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.googlecode.objectify.Key;
@@ -29,9 +30,12 @@ import java.util.Map;
 import org.joda.time.DateTime;
 
 /** Metadata for an {@link Ofy} transaction that saves commit logs. */
-class TransactionInfo {
+public class TransactionInfo {
 
-  private enum Delete { SENTINEL }
+  @VisibleForTesting
+  public enum Delete {
+    SENTINEL
+  }
 
   /** Logical "now" of the transaction. */
   DateTime transactionTime;
@@ -53,7 +57,7 @@ class TransactionInfo {
 
   TransactionInfo(DateTime now) {
     this.transactionTime = now;
-    ofy().load().key(bucketKey);  // Asynchronously load value into session cache.
+    ofy().load().key(bucketKey); // Asynchronously load value into session cache.
   }
 
   TransactionInfo setReadOnly() {
@@ -77,6 +81,10 @@ class TransactionInfo {
 
   ImmutableSet<Key<?>> getTouchedKeys() {
     return ImmutableSet.copyOf(changesBuilder.build().keySet());
+  }
+
+  ImmutableMap<Key<?>, Object> getChanges() {
+    return changesBuilder.build();
   }
 
   ImmutableSet<Key<?>> getDeletes() {

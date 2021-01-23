@@ -19,6 +19,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Strings.emptyToNull;
 import static com.google.common.base.Strings.nullToEmpty;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.common.collect.ImmutableSortedMap.toImmutableSortedMap;
@@ -31,7 +32,9 @@ import static google.registry.model.CacheUtils.memoizeWithShortExpiration;
 import static google.registry.model.common.EntityGroupRoot.getCrossTldKey;
 import static google.registry.model.ofy.ObjectifyService.ofy;
 import static google.registry.model.registry.Registries.assertTldsExist;
+import static google.registry.persistence.transaction.TransactionManagerFactory.jpaTm;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
+import static google.registry.persistence.transaction.TransactionManagerUtil.transactIfJpaTm;
 import static google.registry.util.CollectionUtils.nullToEmptyImmutableCopy;
 import static google.registry.util.CollectionUtils.nullToEmptyImmutableSortedCopy;
 import static google.registry.util.PasswordUtils.SALT_SUPPLIER;
@@ -118,33 +121,34 @@ public class Registrar extends ImmutableObject
     REAL(Objects::nonNull),
 
     /**
-     * A registrar account used by a real third-party registrar undergoing operational testing
-     * and evaluation. Should only be created in sandbox, and should have null IANA/billing IDs.
+     * A registrar account used by a real third-party registrar undergoing operational testing and
+     * evaluation. Should only be created in sandbox, and should have null IANA/billing IDs.
      */
     OTE(Objects::isNull),
 
     /**
-     * A registrar used for predelegation testing.  Should have a null billing ID.  The IANA ID
-     * should be either 9995 or 9996, which are reserved for predelegation testing.
+     * A registrar used for predelegation testing. Should have a null billing ID. The IANA ID should
+     * be either 9995 or 9996, which are reserved for predelegation testing.
      */
     PDT(n -> ImmutableSet.of(9995L, 9996L).contains(n)),
 
     /**
-     * A registrar used for external monitoring by ICANN.  Should have IANA ID 9997 and a null
+     * A registrar used for external monitoring by ICANN. Should have IANA ID 9997 and a null
      * billing ID.
      */
     EXTERNAL_MONITORING(isEqual(9997L)),
 
     /**
-     * A registrar used for when the registry acts as a registrar.  Must have either IANA ID
-     * 9998 (for billable transactions) or 9999 (for non-billable transactions). */
+     * A registrar used for when the registry acts as a registrar. Must have either IANA ID 9998
+     * (for billable transactions) or 9999 (for non-billable transactions).
+     */
     // TODO(b/13786188): determine what billing ID for this should be, if any.
     INTERNAL(n -> ImmutableSet.of(9998L, 9999L).contains(n)),
 
-    /** A registrar used for internal monitoring.  Should have null IANA/billing IDs. */
+    /** A registrar used for internal monitoring. Should have null IANA/billing IDs. */
     MONITORING(Objects::isNull),
 
-    /** A registrar used for internal testing.  Should have null IANA/billing IDs. */
+    /** A registrar used for internal testing. Should have null IANA/billing IDs. */
     TEST(Objects::isNull);
 
     /**
@@ -222,10 +226,7 @@ public class Registrar extends ImmutableObject
    */
   private static final Supplier<ImmutableMap<String, Registrar>> CACHE_BY_CLIENT_ID =
       memoizeWithShortExpiration(
-          () ->
-              tm()
-                  .doTransactionless(
-                      () -> Maps.uniqueIndex(loadAll(), Registrar::getClientId)));
+          () -> tm().doTransactionless(() -> Maps.uniqueIndex(loadAll(), Registrar::getClientId)));
 
   @Parent @Transient Key<EntityGroupRoot> parent = getCrossTldKey();
 
@@ -233,7 +234,7 @@ public class Registrar extends ImmutableObject
    * Unique registrar client id. Must conform to "clIDType" as defined in RFC5730.
    *
    * @see <a href="http://tools.ietf.org/html/rfc5730#section-4.2">Shared Structure Schema</a>
-   *     <p>TODO(shicong): Rename this field to clientId
+   *     <p>TODO(b/177568946): Rename this field to registrarId.
    */
   @Id
   @javax.persistence.Id
@@ -380,12 +381,10 @@ public class Registrar extends ImmutableObject
   @Index @Nullable Long ianaIdentifier;
 
   /** Identifier of registrar used in external billing system (e.g. Oracle). */
-  @Nullable
-  Long billingIdentifier;
+  @Nullable Long billingIdentifier;
 
   /** Purchase Order number used for invoices in external billing system, if applicable. */
-  @Nullable
-  String poNumber;
+  @Nullable String poNumber;
 
   /**
    * Map of currency-to-billing account for the registrar.
@@ -495,9 +494,7 @@ public class Registrar extends ImmutableObject
     if (billingAccountMap == null) {
       return ImmutableMap.of();
     }
-    return billingAccountMap
-        .entrySet()
-        .stream()
+    return billingAccountMap.entrySet().stream()
         .collect(toImmutableSortedMap(natural(), Map.Entry::getKey, v -> v.getValue().accountId));
   }
 
@@ -540,20 +537,24 @@ public class Registrar extends ImmutableObject
     return LIVE_STATES.contains(state) && PUBLICLY_VISIBLE_TYPES.contains(type);
   }
 
-  public String getClientCertificate() {
-    return clientCertificate;
+  /** Returns the client certificate string if it has been set, or empty otherwise. */
+  public Optional<String> getClientCertificate() {
+    return Optional.ofNullable(clientCertificate);
   }
 
-  public String getClientCertificateHash() {
-    return clientCertificateHash;
+  /** Returns the client certificate hash if it has been set, or empty otherwise. */
+  public Optional<String> getClientCertificateHash() {
+    return Optional.ofNullable(clientCertificateHash);
   }
 
-  public String getFailoverClientCertificate() {
-    return failoverClientCertificate;
+  /** Returns the failover client certificate string if it has been set, or empty otherwise. */
+  public Optional<String> getFailoverClientCertificate() {
+    return Optional.ofNullable(failoverClientCertificate);
   }
 
-  public String getFailoverClientCertificateHash() {
-    return failoverClientCertificateHash;
+  /** Returns the failover client certificate hash if it has been set, or empty otherwise. */
+  public Optional<String> getFailoverClientCertificateHash() {
+    return Optional.ofNullable(failoverClientCertificateHash);
   }
 
   public ImmutableList<CidrAddressBlock> getIpAddressAllowList() {
@@ -644,7 +645,20 @@ public class Registrar extends ImmutableObject
   }
 
   private Iterable<RegistrarContact> getContactsIterable() {
-    return ofy().load().type(RegistrarContact.class).ancestor(Registrar.this);
+    if (tm().isOfy()) {
+      return ofy().load().type(RegistrarContact.class).ancestor(Registrar.this);
+    } else {
+      return tm().transact(
+              () ->
+                  jpaTm()
+                      .getEntityManager()
+                      .createQuery(
+                          "FROM RegistrarPoc WHERE registrarId = :registrarId",
+                          RegistrarContact.class)
+                      .setParameter("registrarId", clientIdentifier)
+                      .getResultStream()
+                      .collect(toImmutableList()));
+    }
   }
 
   @Override
@@ -704,8 +718,20 @@ public class Registrar extends ImmutableObject
     return new Builder(clone(this));
   }
 
+  /** Creates a {@link VKey} for this instance. */
   public VKey<Registrar> createVKey() {
-    return VKey.create(Registrar.class, clientIdentifier, Key.create(this));
+    return createVKey(Key.create(this));
+  }
+
+  /** Creates a {@link VKey} for the given {@code registrarId}. */
+  public static VKey<Registrar> createVKey(String registrarId) {
+    checkArgumentNotNull(registrarId, "registrarId must be specified");
+    return createVKey(Key.create(getCrossTldKey(), Registrar.class, registrarId));
+  }
+
+  /** Creates a {@link VKey} instance from a {@link Key} instance. */
+  public static VKey<Registrar> createVKey(Key<Registrar> key) {
+    return VKey.create(Registrar.class, key.getName(), key);
   }
 
   /** A builder for constructing {@link Registrar}, since it is immutable. */
@@ -720,21 +746,22 @@ public class Registrar extends ImmutableObject
       // Client id must be [3,16] chars long. See "clIDType" in the base EPP schema of RFC 5730.
       // (Need to validate this here as there's no matching EPP XSD for validation.)
       checkArgument(
-          Range.closed(3,  16).contains(clientId.length()),
+          Range.closed(3, 16).contains(clientId.length()),
           "Client identifier must be 3-16 characters long.");
       getInstance().clientIdentifier = clientId;
       return this;
     }
 
     public Builder setIanaIdentifier(@Nullable Long ianaIdentifier) {
-      checkArgument(ianaIdentifier == null || ianaIdentifier > 0,
-          "IANA ID must be a positive number");
+      checkArgument(
+          ianaIdentifier == null || ianaIdentifier > 0, "IANA ID must be a positive number");
       getInstance().ianaIdentifier = ianaIdentifier;
       return this;
     }
 
     public Builder setBillingIdentifier(@Nullable Long billingIdentifier) {
-      checkArgument(billingIdentifier == null || billingIdentifier > 0,
+      checkArgument(
+          billingIdentifier == null || billingIdentifier > 0,
           "Billing ID must be a positive number");
       getInstance().billingIdentifier = billingIdentifier;
       return this;
@@ -750,9 +777,7 @@ public class Registrar extends ImmutableObject
         getInstance().billingAccountMap = null;
       } else {
         getInstance().billingAccountMap =
-            billingAccountMap
-                .entrySet()
-                .stream()
+            billingAccountMap.entrySet().stream()
                 .collect(toImmutableMap(Map.Entry::getKey, BillingAccountEntry::new));
       }
       return this;
@@ -789,12 +814,13 @@ public class Registrar extends ImmutableObject
      * to set the allowed TLDs.
      */
     public Builder setAllowedTldsUncached(Set<String> allowedTlds) {
-      ImmutableSet<Key<Registry>> newTldKeys =
+      ImmutableSet<VKey<Registry>> newTldKeys =
           Sets.difference(allowedTlds, getInstance().getAllowedTlds()).stream()
-              .map(tld -> Key.create(getCrossTldKey(), Registry.class, tld))
+              .map(Registry::createVKey)
               .collect(toImmutableSet());
-      Set<Key<Registry>> missingTldKeys =
-          Sets.difference(newTldKeys, ofy().load().keys(newTldKeys).keySet());
+      Set<VKey<Registry>> missingTldKeys =
+          Sets.difference(
+              newTldKeys, transactIfJpaTm(() -> tm().loadByKeysIfPresent(newTldKeys)).keySet());
       checkArgument(missingTldKeys.isEmpty(), "Trying to set nonexisting TLDs: %s", missingTldKeys);
       getInstance().allowedTlds = ImmutableSortedSet.copyOf(allowedTlds);
       return this;
@@ -835,26 +861,6 @@ public class Registrar extends ImmutableObject
       }
     }
 
-    /**
-     * Sets client certificate hash, but not the certificate.
-     *
-     * <p><b>Warning:</b> {@link #setClientCertificate(String, DateTime)} sets the hash for you and
-     * is preferred. Calling this method will nullify the {@code clientCertificate} field.
-     */
-    public Builder setClientCertificateHash(String clientCertificateHash) {
-      if (clientCertificateHash != null) {
-        checkArgument(
-            Pattern.matches("[A-Za-z0-9+/]+", clientCertificateHash),
-            "--cert_hash not a valid base64 (no padding) value");
-        checkArgument(
-            base64().decode(clientCertificateHash).length == 256 / 8,
-            "--cert_hash base64 does not decode to 256 bits");
-      }
-      getInstance().clientCertificate = null;
-      getInstance().clientCertificateHash = clientCertificateHash;
-      return this;
-    }
-
     public Builder setContactsRequireSyncing(boolean contactsRequireSyncing) {
       getInstance().contactsRequireSyncing = contactsRequireSyncing;
       return this;
@@ -876,16 +882,12 @@ public class Registrar extends ImmutableObject
     }
 
     public Builder setPhoneNumber(String phoneNumber) {
-      getInstance().phoneNumber = (phoneNumber == null)
-          ? null
-          : checkValidPhoneNumber(phoneNumber);
+      getInstance().phoneNumber = (phoneNumber == null) ? null : checkValidPhoneNumber(phoneNumber);
       return this;
     }
 
     public Builder setFaxNumber(String faxNumber) {
-      getInstance().faxNumber = (faxNumber == null)
-          ? null
-          : checkValidPhoneNumber(faxNumber);
+      getInstance().faxNumber = (faxNumber == null) ? null : checkValidPhoneNumber(faxNumber);
       return this;
     }
 
@@ -920,7 +922,8 @@ public class Registrar extends ImmutableObject
     }
 
     public Builder setDriveFolderId(@Nullable String driveFolderId) {
-      checkArgument(driveFolderId == null || !driveFolderId.contains("/"),
+      checkArgument(
+          driveFolderId == null || !driveFolderId.contains("/"),
           "Drive folder ID must not be a full URL");
       getInstance().driveFolderId = driveFolderId;
       return this;
@@ -938,9 +941,10 @@ public class Registrar extends ImmutableObject
 
     /** @throws IllegalArgumentException if provided passcode is not 5-digit numeric */
     public Builder setPhonePasscode(String phonePasscode) {
-      checkArgument(phonePasscode == null
-          || PHONE_PASSCODE_PATTERN.matcher(phonePasscode).matches(),
-          "Not a valid telephone passcode (must be 5 digits long): %s", phonePasscode);
+      checkArgument(
+          phonePasscode == null || PHONE_PASSCODE_PATTERN.matcher(phonePasscode).matches(),
+          "Not a valid telephone passcode (must be 5 digits long): %s",
+          phonePasscode);
       getInstance().phonePasscode = phonePasscode;
       return this;
     }
@@ -958,9 +962,11 @@ public class Registrar extends ImmutableObject
       checkArgument(
           getInstance().localizedAddress != null || getInstance().internationalizedAddress != null,
           "Must specify at least one of localized or internationalized address");
-      checkArgument(getInstance().type.isValidIanaId(getInstance().ianaIdentifier),
-          String.format("Supplied IANA ID is not valid for %s registrar type: %s",
-            getInstance().type, getInstance().ianaIdentifier));
+      checkArgument(
+          getInstance().type.isValidIanaId(getInstance().ianaIdentifier),
+          String.format(
+              "Supplied IANA ID is not valid for %s registrar type: %s",
+              getInstance().type, getInstance().ianaIdentifier));
       return cloneEmptyToNull(super.build());
     }
   }
@@ -980,7 +986,9 @@ public class Registrar extends ImmutableObject
 
   /** Loads all registrar entities directly from Datastore. */
   public static Iterable<Registrar> loadAll() {
-    return ImmutableList.copyOf(ofy().load().type(Registrar.class).ancestor(getCrossTldKey()));
+    return tm().isOfy()
+        ? ImmutableList.copyOf(ofy().load().type(Registrar.class).ancestor(getCrossTldKey()))
+        : tm().transact(() -> tm().loadAllOf(Registrar.class));
   }
 
   /** Loads all registrar entities using an in-memory cache. */
@@ -991,8 +999,7 @@ public class Registrar extends ImmutableObject
   /** Loads and returns a registrar entity by its client id directly from Datastore. */
   public static Optional<Registrar> loadByClientId(String clientId) {
     checkArgument(!Strings.isNullOrEmpty(clientId), "clientId must be specified");
-    return Optional.ofNullable(
-        ofy().load().type(Registrar.class).parent(getCrossTldKey()).id(clientId).now());
+    return transactIfJpaTm(() -> tm().loadByKeyIfPresent(createVKey(clientId)));
   }
 
   /**

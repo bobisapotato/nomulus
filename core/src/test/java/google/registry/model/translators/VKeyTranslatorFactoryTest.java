@@ -15,26 +15,35 @@
 package google.registry.model.translators;
 
 import static com.google.common.truth.Truth.assertThat;
-import static google.registry.testing.DatastoreHelper.newDomainBase;
-import static google.registry.testing.DatastoreHelper.persistActiveContact;
+import static google.registry.testing.DatabaseHelper.newDomainBase;
+import static google.registry.testing.DatabaseHelper.persistActiveContact;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.googlecode.objectify.Key;
+import google.registry.model.billing.BillingEvent;
 import google.registry.model.domain.DomainBase;
 import google.registry.model.ofy.CommitLogCheckpoint;
 import google.registry.model.ofy.CommitLogCheckpointRoot;
 import google.registry.model.reporting.HistoryEntry;
 import google.registry.persistence.VKey;
 import google.registry.testing.AppEngineExtension;
+import google.registry.testing.TestObject;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 public class VKeyTranslatorFactoryTest {
 
   @RegisterExtension
-  public final AppEngineExtension appEngine = AppEngineExtension.builder().withDatastore().build();
+  public final AppEngineExtension appEngine =
+      AppEngineExtension.builder().withDatastore().withOfyTestEntities(TestObject.class).build();
 
   VKeyTranslatorFactoryTest() {}
+
+  @BeforeAll
+  static void beforeAll() {
+    VKeyTranslatorFactory.addTestEntityClass(TestObject.class);
+  }
 
   @Test
   void testEntityWithFlatKey() {
@@ -64,12 +73,16 @@ public class VKeyTranslatorFactoryTest {
 
   @Test
   void testEntityWithAncestor() {
-    Key<HistoryEntry> key =
-        Key.create(Key.create(DomainBase.class, "ROID-1"), HistoryEntry.class, 101);
-    VKey<HistoryEntry> vkey = VKeyTranslatorFactory.createVKey(key);
-    assertThat(vkey.getKind()).isEqualTo(HistoryEntry.class);
-    assertThat(vkey.getOfyKey()).isEqualTo(key);
-    assertThat(vkey.getSqlKey()).isEqualTo("DomainBase/ROID-1/101");
+    Key<DomainBase> domainKey = Key.create(DomainBase.class, "ROID-1");
+    Key<HistoryEntry> historyEntryKey = Key.create(domainKey, HistoryEntry.class, 10L);
+    Key<BillingEvent.OneTime> oneTimeKey =
+        Key.create(historyEntryKey, BillingEvent.OneTime.class, 200L);
+
+    VKey<BillingEvent.OneTime> vkey = VKeyTranslatorFactory.createVKey(oneTimeKey);
+
+    assertThat(vkey.getKind()).isEqualTo(BillingEvent.OneTime.class);
+    assertThat(vkey.getOfyKey()).isEqualTo(oneTimeKey);
+    assertThat(vkey.getSqlKey()).isEqualTo(200L);
   }
 
   @Test
@@ -82,5 +95,12 @@ public class VKeyTranslatorFactoryTest {
     assertThat(vkey.getKind()).isEqualTo(DomainBase.class);
     assertThat(vkey.getOfyKey()).isEqualTo(key);
     assertThat(vkey.getSqlKey()).isEqualTo("ROID-1");
+  }
+
+  @Test
+  void testExtraEntityClass() {
+    TestObject testObject = TestObject.create("id", "field");
+    Key<TestObject> key = Key.create(testObject);
+    assertThat(VKeyTranslatorFactory.createVKey(key).getSqlKey()).isEqualTo("id");
   }
 }

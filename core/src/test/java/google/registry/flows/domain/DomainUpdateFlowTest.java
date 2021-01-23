@@ -22,18 +22,18 @@ import static google.registry.model.EppResourceUtils.loadByForeignKey;
 import static google.registry.model.eppcommon.StatusValue.SERVER_UPDATE_PROHIBITED;
 import static google.registry.model.registry.Registry.TldState.QUIET_PERIOD;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
-import static google.registry.testing.DatastoreHelper.assertBillingEvents;
-import static google.registry.testing.DatastoreHelper.assertNoBillingEvents;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.getOnlyHistoryEntryOfType;
-import static google.registry.testing.DatastoreHelper.loadRegistrar;
-import static google.registry.testing.DatastoreHelper.newDomainBase;
-import static google.registry.testing.DatastoreHelper.persistActiveContact;
-import static google.registry.testing.DatastoreHelper.persistActiveDomain;
-import static google.registry.testing.DatastoreHelper.persistActiveHost;
-import static google.registry.testing.DatastoreHelper.persistActiveSubordinateHost;
-import static google.registry.testing.DatastoreHelper.persistDeletedDomain;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.assertBillingEvents;
+import static google.registry.testing.DatabaseHelper.assertNoBillingEvents;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.getOnlyHistoryEntryOfType;
+import static google.registry.testing.DatabaseHelper.loadRegistrar;
+import static google.registry.testing.DatabaseHelper.newDomainBase;
+import static google.registry.testing.DatabaseHelper.persistActiveContact;
+import static google.registry.testing.DatabaseHelper.persistActiveDomain;
+import static google.registry.testing.DatabaseHelper.persistActiveHost;
+import static google.registry.testing.DatabaseHelper.persistActiveSubordinateHost;
+import static google.registry.testing.DatabaseHelper.persistDeletedDomain;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static google.registry.testing.DomainBaseSubject.assertAboutDomains;
 import static google.registry.testing.EppExceptionSubject.assertAboutEppExceptions;
 import static google.registry.testing.HistoryEntrySubject.assertAboutHistoryEntries;
@@ -90,11 +90,14 @@ import google.registry.model.host.HostResource;
 import google.registry.model.registry.Registry;
 import google.registry.model.reporting.HistoryEntry;
 import google.registry.persistence.VKey;
+import google.registry.testing.ReplayExtension;
 import java.util.Optional;
 import org.joda.money.Money;
 import org.joda.time.DateTime;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 /** Unit tests for {@link DomainUpdateFlow}. */
 class DomainUpdateFlowTest extends ResourceFlowTestCase<DomainUpdateFlow, DomainBase> {
@@ -111,6 +114,10 @@ class DomainUpdateFlowTest extends ResourceFlowTestCase<DomainUpdateFlow, Domain
   private ContactResource sh8013Contact;
   private ContactResource mak21Contact;
   private ContactResource unusedContact;
+
+  @Order(value = Order.DEFAULT - 2)
+  @RegisterExtension
+  final ReplayExtension replayExtension = ReplayExtension.createWithoutCompare(clock);
 
   @BeforeEach
   void initDomainTest() {
@@ -146,6 +153,7 @@ class DomainUpdateFlowTest extends ResourceFlowTestCase<DomainUpdateFlow, Domain
     persistResource(
         new HistoryEntry.Builder()
             .setType(HistoryEntry.Type.DOMAIN_CREATE)
+            .setModificationTime(clock.nowUtc())
             .setParent(domain)
             .build());
     clock.advanceOneMilli();
@@ -168,6 +176,7 @@ class DomainUpdateFlowTest extends ResourceFlowTestCase<DomainUpdateFlow, Domain
     persistResource(
         new HistoryEntry.Builder()
             .setType(HistoryEntry.Type.DOMAIN_CREATE)
+            .setModificationTime(clock.nowUtc())
             .setParent(domain)
             .build());
     clock.advanceOneMilli();
@@ -321,7 +330,7 @@ class DomainUpdateFlowTest extends ResourceFlowTestCase<DomainUpdateFlow, Domain
     assertThat(domain.getNameservers()).hasSize(13);
     // getContacts does not return contacts of type REGISTRANT, so check these separately.
     assertThat(domain.getContacts()).hasSize(3);
-    assertThat(tm().load(domain.getRegistrant()).getContactId()).isEqualTo("max_test_7");
+    assertThat(tm().loadByKey(domain.getRegistrant()).getContactId()).isEqualTo("max_test_7");
     assertNoBillingEvents();
     assertDnsTasksEnqueued("example.tld");
   }
@@ -910,7 +919,7 @@ class DomainUpdateFlowTest extends ResourceFlowTestCase<DomainUpdateFlow, Domain
             .addStatusValue(SERVER_UPDATE_PROHIBITED)
             .build());
     Exception e = assertThrows(ResourceStatusProhibitsOperationException.class, this::runFlow);
-    assertThat(e).hasMessageThat().containsMatch("serverUpdateProhibited");
+    assertThat(e).hasMessageThat().contains("serverUpdateProhibited");
   }
 
   @Test
@@ -928,7 +937,7 @@ class DomainUpdateFlowTest extends ResourceFlowTestCase<DomainUpdateFlow, Domain
     persistReferencedEntities();
     persistDomain();
     Exception e = assertThrows(StatusNotClientSettableException.class, this::runFlow);
-    assertThat(e).hasMessageThat().containsMatch("serverUpdateProhibited");
+    assertThat(e).hasMessageThat().contains("serverUpdateProhibited");
   }
 
   @Test
@@ -1229,7 +1238,7 @@ class DomainUpdateFlowTest extends ResourceFlowTestCase<DomainUpdateFlow, Domain
             .setAllowedFullyQualifiedHostNames(ImmutableSet.of("ns1.example.foo"))
             .build());
     runFlow();
-    assertThat(tm().load(reloadResourceByForeignKey().getRegistrant()).getContactId())
+    assertThat(tm().loadByKey(reloadResourceByForeignKey().getRegistrant()).getContactId())
         .isEqualTo("sh8013");
   }
 
@@ -1243,9 +1252,9 @@ class DomainUpdateFlowTest extends ResourceFlowTestCase<DomainUpdateFlow, Domain
         .getContacts()
         .forEach(
             contact -> {
-              assertThat(tm().load(contact.getContactKey()).getContactId()).isEqualTo("mak21");
+              assertThat(tm().loadByKey(contact.getContactKey()).getContactId()).isEqualTo("mak21");
             });
-    assertThat(tm().load(reloadResourceByForeignKey().getRegistrant()).getContactId())
+    assertThat(tm().loadByKey(reloadResourceByForeignKey().getRegistrant()).getContactId())
         .isEqualTo("mak21");
 
     runFlow();
@@ -1254,9 +1263,10 @@ class DomainUpdateFlowTest extends ResourceFlowTestCase<DomainUpdateFlow, Domain
         .getContacts()
         .forEach(
             contact -> {
-              assertThat(tm().load(contact.getContactKey()).getContactId()).isEqualTo("sh8013");
+              assertThat(tm().loadByKey(contact.getContactKey()).getContactId())
+                  .isEqualTo("sh8013");
             });
-    assertThat(tm().load(reloadResourceByForeignKey().getRegistrant()).getContactId())
+    assertThat(tm().loadByKey(reloadResourceByForeignKey().getRegistrant()).getContactId())
         .isEqualTo("sh8013");
   }
 

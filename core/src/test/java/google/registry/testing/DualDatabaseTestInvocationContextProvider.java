@@ -18,9 +18,11 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import google.registry.persistence.transaction.TransactionManager;
 import google.registry.persistence.transaction.TransactionManagerFactory;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
@@ -52,9 +54,23 @@ class DualDatabaseTestInvocationContextProvider implements TestTemplateInvocatio
   @Override
   public Stream<TestTemplateInvocationContext> provideTestTemplateInvocationContexts(
       ExtensionContext context) {
-    return Stream.of(
-        createInvocationContext("Test Datastore", TransactionManagerFactory::ofyTm),
-        createInvocationContext("Test PostgreSQL", TransactionManagerFactory::jpaTm));
+    TestTemplateInvocationContext ofyContext =
+        createInvocationContext(
+            context.getDisplayName() + " with Datastore", TransactionManagerFactory::ofyTm);
+    TestTemplateInvocationContext sqlContext =
+        createInvocationContext(
+            context.getDisplayName() + " with PostgreSQL", TransactionManagerFactory::jpaTm);
+    Method testMethod = context.getTestMethod().orElseThrow(IllegalStateException::new);
+    if (testMethod.isAnnotationPresent(TestOfyAndSql.class)) {
+      return Stream.of(ofyContext, sqlContext);
+    } else if (testMethod.isAnnotationPresent(TestOfyOnly.class)) {
+      return Stream.of(ofyContext);
+    } else if (testMethod.isAnnotationPresent(TestSqlOnly.class)) {
+      return Stream.of(sqlContext);
+    } else {
+      throw new IllegalStateException(
+          "Test method must be annotated with @TestOfyAndSql, @TestOfyOnly or @TestSqlOnly");
+    }
   }
 
   private TestTemplateInvocationContext createInvocationContext(
@@ -83,27 +99,50 @@ class DualDatabaseTestInvocationContextProvider implements TestTemplateInvocatio
     @Override
     public void postProcessTestInstance(Object testInstance, ExtensionContext context)
         throws Exception {
-      List<Field> appEngineRuleFields =
-          Stream.of(testInstance.getClass().getFields())
-              .filter(field -> field.getType().isAssignableFrom(AppEngineExtension.class))
-              .collect(toImmutableList());
-      if (appEngineRuleFields.size() != 1) {
+      List<Field> appEngineExtensionFields = getAppEngineExtensionFields(testInstance.getClass());
+      if (appEngineExtensionFields.size() != 1) {
         throw new IllegalStateException(
-            "@DualDatabaseTest test must have only 1 AppEngineRule field");
+            String.format(
+                "@DualDatabaseTest test must have 1 AppEngineExtension field but found %d field(s)",
+                appEngineExtensionFields.size()));
       }
-      appEngineRuleFields.get(0).setAccessible(true);
+      appEngineExtensionFields.get(0).setAccessible(true);
       AppEngineExtension appEngineRule =
-          (AppEngineExtension) appEngineRuleFields.get(0).get(testInstance);
+          (AppEngineExtension) appEngineExtensionFields.get(0).get(testInstance);
       if (!appEngineRule.isWithDatastoreAndCloudSql()) {
         throw new IllegalStateException(
-            "AppEngineRule in @DualDatabaseTest test must set withDatastoreAndCloudSql()");
+            "AppEngineExtension in @DualDatabaseTest test must set withDatastoreAndCloudSql()");
       }
       context.getStore(NAMESPACE).put(INJECTED_TM_SUPPLIER_KEY, tmSupplier);
+    }
+
+    private static ImmutableList<Field> getAppEngineExtensionFields(Class<?> clazz) {
+      ImmutableList.Builder<Field> fieldBuilder = new ImmutableList.Builder<>();
+      if (clazz.getSuperclass() != null) {
+        fieldBuilder.addAll(getAppEngineExtensionFields(clazz.getSuperclass()));
+      }
+      fieldBuilder.addAll(
+          Stream.of(clazz.getDeclaredFields())
+              .filter(field -> field.getType().isAssignableFrom(AppEngineExtension.class))
+              .collect(toImmutableList()));
+      return fieldBuilder.build();
     }
   }
 
   static void injectTmForDualDatabaseTest(ExtensionContext context) {
     if (isDualDatabaseTest(context)) {
+      context
+          .getTestMethod()
+          .ifPresent(
+              testMethod -> {
+                if (!testMethod.isAnnotationPresent(TestOfyAndSql.class)
+                    && !testMethod.isAnnotationPresent(TestOfyOnly.class)
+                    && !testMethod.isAnnotationPresent(TestSqlOnly.class)) {
+                  throw new IllegalStateException(
+                      "Test method must be annotated with @TestOfyAndSql, @TestOfyOnly or"
+                          + " @TestSqlOnly");
+                }
+              });
       context.getStore(NAMESPACE).put(ORIGINAL_TM_KEY, tm());
       Supplier<? extends TransactionManager> tmSupplier =
           (Supplier<? extends TransactionManager>)
@@ -122,6 +161,14 @@ class DualDatabaseTestInvocationContextProvider implements TestTemplateInvocatio
 
   private static boolean isDualDatabaseTest(ExtensionContext context) {
     Object testInstance = context.getTestInstance().orElseThrow(RuntimeException::new);
-    return testInstance.getClass().isAnnotationPresent(DualDatabaseTest.class);
+    // If the test method is declared in its parent class,
+    // e.g. google.registry.flows.ResourceFlowTestCase.testRequiresLogin,
+    // we don't consider it is a DualDatabaseTest. This is because there may exist some subclasses
+    // that have not been migrated to DualDatabaseTest.
+    boolean isDeclaredTestMethod =
+        ImmutableSet.copyOf(testInstance.getClass().getDeclaredMethods())
+            .contains(context.getTestMethod().orElseThrow(RuntimeException::new));
+    return testInstance.getClass().isAnnotationPresent(DualDatabaseTest.class)
+        && isDeclaredTestMethod;
   }
 }

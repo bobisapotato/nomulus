@@ -19,9 +19,11 @@ import static com.google.common.truth.Truth8.assertThat;
 import static google.registry.model.ofy.ObjectifyService.ofy;
 import static google.registry.persistence.transaction.TransactionManagerFactory.jpaTm;
 import static google.registry.testing.CertificateSamples.SAMPLE_CERT;
-import static google.registry.testing.CertificateSamples.SAMPLE_CERT_HASH;
-import static google.registry.testing.DatastoreHelper.createTlds;
-import static google.registry.testing.DatastoreHelper.persistNewRegistrar;
+import static google.registry.testing.CertificateSamples.SAMPLE_CERT3;
+import static google.registry.testing.CertificateSamples.SAMPLE_CERT3_HASH;
+import static google.registry.testing.DatabaseHelper.createTlds;
+import static google.registry.testing.DatabaseHelper.persistNewRegistrar;
+import static google.registry.util.DateTimeUtils.START_OF_TIME;
 import static org.joda.time.DateTimeZone.UTC;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.eq;
@@ -31,10 +33,13 @@ import static org.mockito.Mockito.when;
 
 import com.beust.jcommander.ParameterException;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.Range;
 import com.google.common.net.MediaType;
+import google.registry.flows.certs.CertificateChecker;
+import google.registry.flows.certs.CertificateChecker.InsecureCertificateException;
 import google.registry.model.registrar.Registrar;
-import google.registry.testing.CertificateSamples;
 import java.io.IOException;
 import java.util.Optional;
 import org.joda.money.CurrencyUnit;
@@ -52,6 +57,13 @@ class CreateRegistrarCommandTest extends CommandTestCase<CreateRegistrarCommand>
   @BeforeEach
   void beforeEach() {
     command.setConnection(connection);
+    command.certificateChecker =
+        new CertificateChecker(
+            ImmutableSortedMap.of(START_OF_TIME, 825, DateTime.parse("2020-09-01T00:00:00Z"), 398),
+            30,
+            2048,
+            ImmutableSet.of("secp256r1", "secp384r1"),
+            fakeClock);
   }
 
   @Test
@@ -84,7 +96,7 @@ class CreateRegistrarCommandTest extends CommandTestCase<CreateRegistrarCommand>
     assertThat(registrar.getState()).isEqualTo(Registrar.State.ACTIVE);
     assertThat(registrar.getAllowedTlds()).isEmpty();
     assertThat(registrar.getIpAddressAllowList()).isEmpty();
-    assertThat(registrar.getClientCertificateHash()).isNull();
+    assertThat(registrar.getClientCertificateHash()).isEmpty();
     assertThat(registrar.getPhonePasscode()).isEqualTo("01234");
     assertThat(registrar.getCreationTime()).isIn(Range.closed(before, after));
     assertThat(registrar.getLastUpdateTime()).isEqualTo(registrar.getCreationTime());
@@ -354,12 +366,13 @@ class CreateRegistrarCommandTest extends CommandTestCase<CreateRegistrarCommand>
 
   @Test
   void testSuccess_clientCertFileFlag() throws Exception {
+    fakeClock.setTo(DateTime.parse("2020-11-01T00:00:00Z"));
     runCommandForced(
         "--name=blobio",
         "--password=some_password",
         "--registrar_type=REAL",
         "--iana_id=8",
-        "--cert_file=" + getCertFilename(),
+        "--cert_file=" + getCertFilename(SAMPLE_CERT3),
         "--passcode=01234",
         "--icann_referral_email=foo@bar.test",
         "--street=\"123 Fake St\"",
@@ -371,41 +384,78 @@ class CreateRegistrarCommandTest extends CommandTestCase<CreateRegistrarCommand>
 
     Optional<Registrar> registrar = Registrar.loadByClientId("clientz");
     assertThat(registrar).isPresent();
-    assertThat(registrar.get().getClientCertificateHash())
-        .isEqualTo(CertificateSamples.SAMPLE_CERT_HASH);
+    assertThat(registrar.get().getClientCertificateHash()).hasValue(SAMPLE_CERT3_HASH);
   }
 
   @Test
-  void testSuccess_clientCertHashFlag() throws Exception {
-    runCommandForced(
-        "--name=blobio",
-        "--password=some_password",
-        "--registrar_type=REAL",
-        "--iana_id=8",
-        "--cert_hash=" + SAMPLE_CERT_HASH,
-        "--passcode=01234",
-        "--icann_referral_email=foo@bar.test",
-        "--street=\"123 Fake St\"",
-        "--city Fakington",
-        "--state MA",
-        "--zip 00351",
-        "--cc US",
-        "clientz");
+  void testFail_clientCertFileFlagWithViolation() throws Exception {
+    fakeClock.setTo(DateTime.parse("2020-10-01T00:00:00Z"));
+    InsecureCertificateException thrown =
+        assertThrows(
+            InsecureCertificateException.class,
+            () ->
+                runCommandForced(
+                    "--name=blobio",
+                    "--password=some_password",
+                    "--registrar_type=REAL",
+                    "--iana_id=8",
+                    "--cert_file=" + getCertFilename(SAMPLE_CERT),
+                    "--passcode=01234",
+                    "--icann_referral_email=foo@bar.test",
+                    "--street=\"123 Fake St\"",
+                    "--city Fakington",
+                    "--state MA",
+                    "--zip 00351",
+                    "--cc US",
+                    "clientz"));
 
+    assertThat(thrown.getMessage())
+        .isEqualTo(
+            "Certificate validity period is too long; it must be less than or equal to 398"
+                + " days.");
     Optional<Registrar> registrar = Registrar.loadByClientId("clientz");
-    assertThat(registrar).isPresent();
-    assertThat(registrar.get().getClientCertificate()).isNull();
-    assertThat(registrar.get().getClientCertificateHash()).isEqualTo(SAMPLE_CERT_HASH);
+    assertThat(registrar).isEmpty();
+  }
+
+  @Test
+  void testFail_clientCertFileFlagWithMultipleViolations() throws Exception {
+    fakeClock.setTo(DateTime.parse("2055-10-01T00:00:00Z"));
+    InsecureCertificateException thrown =
+        assertThrows(
+            InsecureCertificateException.class,
+            () ->
+                runCommandForced(
+                    "--name=blobio",
+                    "--password=some_password",
+                    "--registrar_type=REAL",
+                    "--iana_id=8",
+                    "--cert_file=" + getCertFilename(SAMPLE_CERT),
+                    "--passcode=01234",
+                    "--icann_referral_email=foo@bar.test",
+                    "--street=\"123 Fake St\"",
+                    "--city Fakington",
+                    "--state MA",
+                    "--zip 00351",
+                    "--cc US",
+                    "clientz"));
+
+    assertThat(thrown.getMessage())
+        .isEqualTo(
+            "Certificate is expired.\nCertificate validity period is too long; it must be less"
+                + " than or equal to 398 days.");
+    Optional<Registrar> registrar = Registrar.loadByClientId("clientz");
+    assertThat(registrar).isEmpty();
   }
 
   @Test
   void testSuccess_failoverClientCertFileFlag() throws Exception {
+    fakeClock.setTo(DateTime.parse("2020-11-01T00:00:00Z"));
     runCommandForced(
         "--name=blobio",
         "--password=some_password",
         "--registrar_type=REAL",
         "--iana_id=8",
-        "--failover_cert_file=" + getCertFilename(),
+        "--failover_cert_file=" + getCertFilename(SAMPLE_CERT3),
         "--passcode=01234",
         "--icann_referral_email=foo@bar.test",
         "--street=\"123 Fake St\"",
@@ -418,10 +468,70 @@ class CreateRegistrarCommandTest extends CommandTestCase<CreateRegistrarCommand>
     Optional<Registrar> registrarOptional = Registrar.loadByClientId("clientz");
     assertThat(registrarOptional).isPresent();
     Registrar registrar = registrarOptional.get();
-    assertThat(registrar.getClientCertificate()).isNull();
-    assertThat(registrar.getClientCertificateHash()).isNull();
-    assertThat(registrar.getFailoverClientCertificate()).isEqualTo(SAMPLE_CERT);
-    assertThat(registrar.getFailoverClientCertificateHash()).isEqualTo(SAMPLE_CERT_HASH);
+    assertThat(registrar.getClientCertificate()).isEmpty();
+    assertThat(registrar.getClientCertificateHash()).isEmpty();
+    assertThat(registrar.getFailoverClientCertificate()).hasValue(SAMPLE_CERT3);
+    assertThat(registrar.getFailoverClientCertificateHash()).hasValue(SAMPLE_CERT3_HASH);
+  }
+
+  @Test
+  void testFail_failoverClientCertFileFlagWithViolations() throws Exception {
+    fakeClock.setTo(DateTime.parse("2020-11-01T00:00:00Z"));
+    InsecureCertificateException thrown =
+        assertThrows(
+            InsecureCertificateException.class,
+            () ->
+                runCommandForced(
+                    "--name=blobio",
+                    "--password=some_password",
+                    "--registrar_type=REAL",
+                    "--iana_id=8",
+                    "--failover_cert_file=" + getCertFilename(SAMPLE_CERT),
+                    "--passcode=01234",
+                    "--icann_referral_email=foo@bar.test",
+                    "--street=\"123 Fake St\"",
+                    "--city Fakington",
+                    "--state MA",
+                    "--zip 00351",
+                    "--cc US",
+                    "clientz"));
+
+    assertThat(thrown.getMessage())
+        .isEqualTo(
+            "Certificate validity period is too long; it must be less than or equal to 398"
+                + " days.");
+    Optional<Registrar> registrar = Registrar.loadByClientId("clientz");
+    assertThat(registrar).isEmpty();
+  }
+
+  @Test
+  void testFail_failoverClientCertFileFlagWithMultipleViolations() throws Exception {
+    fakeClock.setTo(DateTime.parse("2055-11-01T00:00:00Z"));
+    InsecureCertificateException thrown =
+        assertThrows(
+            InsecureCertificateException.class,
+            () ->
+                runCommandForced(
+                    "--name=blobio",
+                    "--password=some_password",
+                    "--registrar_type=REAL",
+                    "--iana_id=8",
+                    "--failover_cert_file=" + getCertFilename(SAMPLE_CERT),
+                    "--passcode=01234",
+                    "--icann_referral_email=foo@bar.test",
+                    "--street=\"123 Fake St\"",
+                    "--city Fakington",
+                    "--state MA",
+                    "--zip 00351",
+                    "--cc US",
+                    "clientz"));
+
+    assertThat(thrown.getMessage())
+        .isEqualTo(
+            "Certificate is expired.\nCertificate validity period is too long; it must be less"
+                + " than or equal to 398 days.");
+    Optional<Registrar> registrar = Registrar.loadByClientId("clientz");
+    assertThat(registrar).isEmpty();
   }
 
   @Test
@@ -1047,116 +1157,6 @@ class CreateRegistrarCommandTest extends CommandTestCase<CreateRegistrarCommand>
                 "--zip 00351",
                 "--cc US",
                 "clientz"));
-  }
-
-  @Test
-  void testFailure_invalidCertFileContents() {
-    assertThrows(
-        Exception.class,
-        () ->
-            runCommandForced(
-                "--name=blobio",
-                "--password=some_password",
-                "--registrar_type=REAL",
-                "--iana_id=8",
-                "--cert_file=" + writeToTmpFile("ABCDEF"),
-                "--passcode=01234",
-                "--icann_referral_email=foo@bar.test",
-                "--street=\"123 Fake St\"",
-                "--city Fakington",
-                "--state MA",
-                "--zip 00351",
-                "--cc US",
-                "clientz"));
-  }
-
-  @Test
-  void testFailure_invalidFailoverCertFileContents() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            runCommandForced(
-                "--name=blobio",
-                "--password=some_password",
-                "--registrar_type=REAL",
-                "--iana_id=8",
-                "--failover_cert_file=" + writeToTmpFile("ABCDEF"),
-                "--passcode=01234",
-                "--icann_referral_email=foo@bar.test",
-                "--street=\"123 Fake St\"",
-                "--city Fakington",
-                "--state MA",
-                "--zip 00351",
-                "--cc US",
-                "clientz"));
-  }
-
-  @Test
-  void testFailure_certHashAndCertFile() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            runCommandForced(
-                "--name=blobio",
-                "--password=some_password",
-                "--registrar_type=REAL",
-                "--iana_id=8",
-                "--cert_file=" + getCertFilename(),
-                "--cert_hash=ABCDEF",
-                "--passcode=01234",
-                "--icann_referral_email=foo@bar.test",
-                "--street=\"123 Fake St\"",
-                "--city Fakington",
-                "--state MA",
-                "--zip 00351",
-                "--cc US",
-                "clientz"));
-  }
-
-  @Test
-  void testFailure_certHashNotBase64() {
-    IllegalArgumentException thrown =
-        assertThrows(
-            IllegalArgumentException.class,
-            () ->
-                runCommandForced(
-                    "--name=blobio",
-                    "--password=some_password",
-                    "--registrar_type=REAL",
-                    "--iana_id=8",
-                    "--cert_hash=!",
-                    "--passcode=01234",
-                    "--icann_referral_email=foo@bar.test",
-                    "--street=\"123 Fake St\"",
-                    "--city Fakington",
-                    "--state MA",
-                    "--zip 00351",
-                    "--cc US",
-                    "clientz"));
-    assertThat(thrown).hasMessageThat().contains("base64");
-  }
-
-  @Test
-  void testFailure_certHashNotA256BitValue() {
-    IllegalArgumentException thrown =
-        assertThrows(
-            IllegalArgumentException.class,
-            () ->
-                runCommandForced(
-                    "--name=blobio",
-                    "--password=some_password",
-                    "--registrar_type=REAL",
-                    "--iana_id=8",
-                    "--cert_hash=abc",
-                    "--passcode=01234",
-                    "--icann_referral_email=foo@bar.test",
-                    "--street=\"123 Fake St\"",
-                    "--city Fakington",
-                    "--state MA",
-                    "--zip 00351",
-                    "--cc US",
-                    "clientz"));
-    assertThat(thrown).hasMessageThat().contains("256");
   }
 
   @Test

@@ -22,14 +22,14 @@ import static google.registry.model.reporting.HistoryEntry.Type.DOMAIN_CREATE;
 import static google.registry.model.reporting.HistoryEntry.Type.DOMAIN_TRANSFER_APPROVE;
 import static google.registry.model.reporting.HistoryEntry.Type.DOMAIN_TRANSFER_REQUEST;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
-import static google.registry.testing.DatastoreHelper.assertBillingEventsForResource;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.deleteResource;
-import static google.registry.testing.DatastoreHelper.getOnlyHistoryEntryOfType;
-import static google.registry.testing.DatastoreHelper.getOnlyPollMessage;
-import static google.registry.testing.DatastoreHelper.getPollMessages;
-import static google.registry.testing.DatastoreHelper.loadRegistrar;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.assertBillingEventsForResource;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.deleteResource;
+import static google.registry.testing.DatabaseHelper.getOnlyHistoryEntryOfType;
+import static google.registry.testing.DatabaseHelper.getOnlyPollMessage;
+import static google.registry.testing.DatabaseHelper.getPollMessages;
+import static google.registry.testing.DatabaseHelper.loadRegistrar;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static google.registry.testing.DomainBaseSubject.assertAboutDomains;
 import static google.registry.testing.EppExceptionSubject.assertAboutEppExceptions;
 import static google.registry.testing.HistoryEntrySubject.assertAboutHistoryEntries;
@@ -191,7 +191,7 @@ class DomainTransferApproveFlowTest
     assertAboutHistoryEntries().that(historyEntryTransferApproved).hasOtherClientId("NewRegistrar");
     assertTransferApproved(domain, originalTransferData);
     assertAboutDomains().that(domain).hasRegistrationExpirationTime(expectedExpirationTime);
-    assertThat(tm().load(domain.getAutorenewBillingEvent()).getEventTime())
+    assertThat(tm().loadByKey(domain.getAutorenewBillingEvent()).getEventTime())
         .isEqualTo(expectedExpirationTime);
     // The poll message (in the future) to the losing registrar for implicit ack should be gone.
     assertThat(getPollMessages(domain, "TheRegistrar", clock.nowUtc().plusMonths(1))).isEmpty();

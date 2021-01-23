@@ -22,11 +22,11 @@ import static google.registry.model.ofy.ObjectifyService.ofy;
 import static google.registry.model.registry.Registry.TldState.GENERAL_AVAILABILITY;
 import static google.registry.model.registry.Registry.TldState.PREDELEGATION;
 import static google.registry.model.registry.Registry.TldState.START_DATE_SUNRISE;
-import static google.registry.testing.DatastoreHelper.assertBillingEventsForResource;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.createTlds;
-import static google.registry.testing.DatastoreHelper.getOnlyHistoryEntryOfType;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.assertBillingEventsForResource;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.createTlds;
+import static google.registry.testing.DatabaseHelper.getOnlyHistoryEntryOfType;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static google.registry.testing.DomainBaseSubject.assertAboutDomains;
 import static google.registry.testing.EppMetricSubject.assertThat;
 import static google.registry.util.DateTimeUtils.START_OF_TIME;
@@ -501,7 +501,7 @@ class EppLifecycleDomainTest extends EppTestCase {
 
   @Test
   void testEapDomainDeletion_withinAddGracePeriod_eapFeeIsNotRefunded() throws Exception {
-    assertThatCommand("login_valid_fee_extension.xml").hasResponse("generic_success_response.xml");
+    assertThatCommand("login_valid_fee_extension.xml").hasSuccessfulLogin();
     createContacts(DateTime.parse("2000-06-01T00:00:00Z"));
 
     // Set the EAP schedule.
@@ -718,7 +718,7 @@ class EppLifecycleDomainTest extends EppTestCase {
             START_OF_TIME, PREDELEGATION,
             gaDate, GENERAL_AVAILABILITY));
 
-    assertThatCommand("login_valid_fee_extension.xml").hasResponse("generic_success_response.xml");
+    assertThatCommand("login_valid_fee_extension.xml").hasSuccessfulLogin();
 
     assertThatCommand("domain_check_fee_premium.xml")
         .atTime(gaDate.plusDays(1))
@@ -805,30 +805,35 @@ class EppLifecycleDomainTest extends EppTestCase {
 
     // As the losing registrar, read the request poll message, and then ack it.
     assertThatLoginSucceeds("NewRegistrar", "foo-BAR2");
+    String messageId = "1-C-EXAMPLE-18-24-2001";
     assertThatCommand("poll.xml")
         .atTime("2001-01-01T00:01:00Z")
-        .hasResponse("poll_response_domain_transfer_request.xml");
-    assertThatCommand("poll_ack.xml", ImmutableMap.of("ID", "1-C-EXAMPLE-17-23-2001"))
+        .hasResponse("poll_response_domain_transfer_request.xml", ImmutableMap.of("ID", messageId));
+    assertThatCommand("poll_ack.xml", ImmutableMap.of("ID", messageId))
         .atTime("2001-01-01T00:01:00Z")
         .hasResponse("poll_ack_response_empty.xml");
 
     // Five days in the future, expect a server approval poll message to the loser, and ack it.
+    messageId = "1-C-EXAMPLE-18-23-2001";
     assertThatCommand("poll.xml")
         .atTime("2001-01-06T00:01:00Z")
-        .hasResponse("poll_response_domain_transfer_server_approve_loser.xml");
-    assertThatCommand("poll_ack.xml", ImmutableMap.of("ID", "1-C-EXAMPLE-17-22-2001"))
+        .hasResponse(
+            "poll_response_domain_transfer_server_approve_loser.xml",
+            ImmutableMap.of("ID", messageId));
+    assertThatCommand("poll_ack.xml", ImmutableMap.of("ID", messageId))
         .atTime("2001-01-06T00:01:00Z")
         .hasResponse("poll_ack_response_empty.xml");
     assertThatLogoutSucceeds();
 
     // Also expect a server approval poll message to the winner, with the transfer request trid.
+    messageId = "1-C-EXAMPLE-18-22-2001";
     assertThatLoginSucceeds("TheRegistrar", "password2");
     assertThatCommand("poll.xml")
         .atTime("2001-01-06T00:02:00Z")
         .hasResponse(
             "poll_response_domain_transfer_server_approve_winner.xml",
-            ImmutableMap.of("SERVER_TRID", transferRequestTrid));
-    assertThatCommand("poll_ack.xml", ImmutableMap.of("ID", "1-C-EXAMPLE-17-21-2001"))
+            ImmutableMap.of("SERVER_TRID", transferRequestTrid, "ID", messageId));
+    assertThatCommand("poll_ack.xml", ImmutableMap.of("ID", messageId))
         .atTime("2001-01-06T00:02:00Z")
         .hasResponse("poll_ack_response_empty.xml");
     assertThatLogoutSucceeds();
@@ -1191,7 +1196,7 @@ class EppLifecycleDomainTest extends EppTestCase {
 
     assertThatLogin("NewRegistrar", "foo-BAR2")
         .atTime(sunriseDate.minusDays(3))
-        .hasResponse("generic_success_response.xml");
+        .hasSuccessfulLogin();
 
     createContactsAndHosts();
 
@@ -1287,7 +1292,7 @@ class EppLifecycleDomainTest extends EppTestCase {
 
     assertThatLogin("NewRegistrar", "foo-BAR2")
         .atTime(sunriseDate.minusDays(3))
-        .hasResponse("generic_success_response.xml");
+        .hasSuccessfulLogin();
 
     createContactsAndHosts();
 

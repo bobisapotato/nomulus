@@ -16,6 +16,7 @@ package google.registry.model.poll;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static google.registry.util.CollectionUtils.forceEmptyToNull;
+import static google.registry.util.CollectionUtils.isNullOrEmpty;
 import static google.registry.util.CollectionUtils.nullToEmpty;
 import static google.registry.util.DateTimeUtils.END_OF_TIME;
 import static google.registry.util.PreconditionsUtils.checkArgumentNotNull;
@@ -52,6 +53,7 @@ import google.registry.persistence.WithLongVKey;
 import google.registry.schema.replay.DatastoreAndSqlEntity;
 import java.util.List;
 import java.util.Optional;
+import javax.annotation.Nullable;
 import javax.persistence.AttributeOverride;
 import javax.persistence.AttributeOverrides;
 import javax.persistence.Column;
@@ -185,6 +187,7 @@ public abstract class PollMessage extends ImmutableObject
   @Override
   public abstract VKey<? extends PollMessage> createVKey();
 
+  /** Static VKey factory method for use by VKeyTranslatorFactory. */
   public static VKey<PollMessage> createVKey(Key<PollMessage> key) {
     return VKey.create(PollMessage.class, key.getId(), key);
   }
@@ -279,7 +282,7 @@ public abstract class PollMessage extends ImmutableObject
   @EntitySubclass(index = false)
   @javax.persistence.Entity
   @DiscriminatorValue("ONE_TIME")
-  @WithLongVKey
+  @WithLongVKey(compositeKey = true)
   public static class OneTime extends PollMessage {
 
     // Response data. Objectify cannot persist a base class type, so we must have a separate field
@@ -289,7 +292,7 @@ public abstract class PollMessage extends ImmutableObject
 
     @Transient List<ContactTransferResponse> contactTransferResponses;
 
-    @Transient
+    @Transient @ImmutableObject.DoNotCompare
     List<DomainPendingActionNotificationResponse> domainPendingActionNotificationResponses;
 
     @Transient List<DomainTransferResponse> domainTransferResponses;
@@ -355,6 +358,11 @@ public abstract class PollMessage extends ImmutableObject
       return VKey.create(OneTime.class, getId(), Key.create(this));
     }
 
+    /** Converts an unspecialized VKey&lt;PollMessage&gt; to a VKey of the derived class. */
+    public static @Nullable VKey<OneTime> convertVKey(@Nullable VKey<OneTime> key) {
+      return key == null ? null : VKey.create(OneTime.class, key.getSqlKey(), key.getOfyKey());
+    }
+
     @Override
     public Builder asBuilder() {
       return new Builder(clone(this));
@@ -369,6 +377,47 @@ public abstract class PollMessage extends ImmutableObject
           .addAll(nullToEmpty(domainTransferResponses))
           .addAll(nullToEmpty(hostPendingActionNotificationResponses))
           .build();
+    }
+
+    @Override
+    @OnLoad
+    void onLoad() {
+      super.onLoad();
+      if (!isNullOrEmpty(contactPendingActionNotificationResponses)) {
+        pendingActionNotificationResponse = contactPendingActionNotificationResponses.get(0);
+      }
+      if (!isNullOrEmpty(contactTransferResponses)) {
+        contactId = contactTransferResponses.get(0).getContactId();
+        transferResponse = contactTransferResponses.get(0);
+      }
+    }
+
+    @Override
+    @PostLoad
+    void postLoad() {
+      super.postLoad();
+      if (pendingActionNotificationResponse != null) {
+        contactPendingActionNotificationResponses =
+            ImmutableList.of(
+                ContactPendingActionNotificationResponse.create(
+                    pendingActionNotificationResponse.nameOrId.value,
+                    pendingActionNotificationResponse.getActionResult(),
+                    pendingActionNotificationResponse.getTrid(),
+                    pendingActionNotificationResponse.processedDate));
+      }
+      if (contactId != null && transferResponse != null) {
+        contactTransferResponses =
+            ImmutableList.of(
+                new ContactTransferResponse.Builder()
+                    .setContactId(contactId)
+                    .setGainingClientId(transferResponse.getGainingClientId())
+                    .setLosingClientId(transferResponse.getLosingClientId())
+                    .setTransferStatus(transferResponse.getTransferStatus())
+                    .setTransferRequestTime(transferResponse.getTransferRequestTime())
+                    .setPendingTransferExpirationTime(
+                        transferResponse.getPendingTransferExpirationTime())
+                    .build());
+      }
     }
 
     /** A builder for {@link OneTime} since it is immutable. */
@@ -389,6 +438,10 @@ public abstract class PollMessage extends ImmutableObject
                     .filter(ContactPendingActionNotificationResponse.class::isInstance)
                     .map(ContactPendingActionNotificationResponse.class::cast)
                     .collect(toImmutableList()));
+        if (getInstance().contactPendingActionNotificationResponses != null) {
+          getInstance().pendingActionNotificationResponse =
+              getInstance().contactPendingActionNotificationResponses.get(0);
+        }
         getInstance().contactTransferResponses =
             forceEmptyToNull(
                 responseData
@@ -396,6 +449,11 @@ public abstract class PollMessage extends ImmutableObject
                     .filter(ContactTransferResponse.class::isInstance)
                     .map(ContactTransferResponse.class::cast)
                     .collect(toImmutableList()));
+        if (getInstance().contactTransferResponses != null) {
+          getInstance().contactId = getInstance().contactTransferResponses.get(0).getContactId();
+          getInstance().transferResponse = getInstance().contactTransferResponses.get(0);
+        }
+
         getInstance().domainPendingActionNotificationResponses =
             forceEmptyToNull(
                 responseData
@@ -432,7 +490,7 @@ public abstract class PollMessage extends ImmutableObject
   @EntitySubclass(index = false)
   @javax.persistence.Entity
   @DiscriminatorValue("AUTORENEW")
-  @WithLongVKey
+  @WithLongVKey(compositeKey = true)
   public static class Autorenew extends PollMessage {
 
     /** The target id of the autorenew event. */
@@ -454,6 +512,11 @@ public abstract class PollMessage extends ImmutableObject
     @Override
     public VKey<Autorenew> createVKey() {
       return VKey.create(Autorenew.class, getId(), Key.create(this));
+    }
+
+    /** Converts an unspecialized VKey&lt;PollMessage&gt; to a VKey of the derived class. */
+    public static @Nullable VKey<Autorenew> convertVKey(VKey<Autorenew> key) {
+      return key == null ? null : VKey.create(Autorenew.class, key.getSqlKey(), key.getOfyKey());
     }
 
     @Override

@@ -16,6 +16,7 @@ package google.registry.model.ofy;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static google.registry.model.ofy.ObjectifyService.ofy;
 import static google.registry.util.PreconditionsUtils.checkArgumentNotNull;
 
@@ -23,8 +24,13 @@ import com.google.common.base.Functions;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Streams;
 import com.googlecode.objectify.Key;
+import com.googlecode.objectify.Result;
 import google.registry.model.contact.ContactHistory;
+import google.registry.model.domain.DomainHistory;
 import google.registry.model.host.HostHistory;
 import google.registry.model.reporting.HistoryEntry;
 import google.registry.persistence.VKey;
@@ -102,12 +108,22 @@ public class DatastoreTransactionManager implements TransactionManager {
 
   @Override
   public void insert(Object entity) {
-    saveEntity(entity);
+    put(entity);
   }
 
   @Override
   public void insertAll(ImmutableCollection<?> entities) {
-    getOfy().save().entities(entities);
+    putAll(entities);
+  }
+
+  @Override
+  public void insertWithoutBackup(Object entity) {
+    putWithoutBackup(entity);
+  }
+
+  @Override
+  public void insertAllWithoutBackup(ImmutableCollection<?> entities) {
+    putAllWithoutBackup(entities);
   }
 
   @Override
@@ -117,17 +133,37 @@ public class DatastoreTransactionManager implements TransactionManager {
 
   @Override
   public void putAll(ImmutableCollection<?> entities) {
-    getOfy().save().entities(entities);
+    syncIfTransactionless(getOfy().save().entities(entities));
+  }
+
+  @Override
+  public void putWithoutBackup(Object entity) {
+    syncIfTransactionless(getOfy().saveWithoutBackup().entities(entity));
+  }
+
+  @Override
+  public void putAllWithoutBackup(ImmutableCollection<?> entities) {
+    syncIfTransactionless(getOfy().saveWithoutBackup().entities(entities));
   }
 
   @Override
   public void update(Object entity) {
-    saveEntity(entity);
+    put(entity);
   }
 
   @Override
   public void updateAll(ImmutableCollection<?> entities) {
-    getOfy().save().entities(entities);
+    putAll(entities);
+  }
+
+  @Override
+  public void updateWithoutBackup(Object entity) {
+    putWithoutBackup(entity);
+  }
+
+  @Override
+  public void updateAllWithoutBackup(ImmutableCollection<?> entities) {
+    putAllWithoutBackup(entities);
   }
 
   @Override
@@ -145,21 +181,13 @@ public class DatastoreTransactionManager implements TransactionManager {
   // VKey instead of by ofy Key.  But ideally, there should be one set of TransactionManager
   // interface tests that are applied to both the datastore and SQL implementations.
   @Override
-  public <T> Optional<T> maybeLoad(VKey<T> key) {
+  public <T> Optional<T> loadByKeyIfPresent(VKey<T> key) {
     return Optional.ofNullable(loadNullable(key));
   }
 
   @Override
-  public <T> T load(VKey<T> key) {
-    T result = loadNullable(key);
-    if (result == null) {
-      throw new NoSuchElementException(key.toString());
-    }
-    return result;
-  }
-
-  @Override
-  public <T> ImmutableMap<VKey<? extends T>, T> load(Iterable<? extends VKey<? extends T>> keys) {
+  public <T> ImmutableMap<VKey<? extends T>, T> loadByKeysIfPresent(
+      Iterable<? extends VKey<? extends T>> keys) {
     // Keep track of the Key -> VKey mapping so we can translate them back.
     ImmutableMap<Key<T>, VKey<? extends T>> keyMap =
         StreamSupport.stream(keys.spliterator(), false)
@@ -174,14 +202,56 @@ public class DatastoreTransactionManager implements TransactionManager {
   }
 
   @Override
-  public <T> ImmutableList<T> loadAll(Class<T> clazz) {
-    // We can do a ofy().load().type(clazz), but this doesn't work in a transaction.
-    throw new UnsupportedOperationException("Not available in the Datastore transaction manager");
+  public <T> ImmutableList<T> loadByEntitiesIfPresent(Iterable<T> entities) {
+    return ImmutableList.copyOf(getOfy().load().entities(entities).values());
+  }
+
+  @Override
+  public <T> T loadByKey(VKey<T> key) {
+    T result = loadNullable(key);
+    if (result == null) {
+      throw new NoSuchElementException(key.toString());
+    }
+    return result;
+  }
+
+  @Override
+  public <T> ImmutableMap<VKey<? extends T>, T> loadByKeys(
+      Iterable<? extends VKey<? extends T>> keys) {
+    ImmutableMap<VKey<? extends T>, T> result = loadByKeysIfPresent(keys);
+    ImmutableSet<? extends VKey<? extends T>> missingKeys =
+        Streams.stream(keys).filter(k -> !result.containsKey(k)).collect(toImmutableSet());
+    if (!missingKeys.isEmpty()) {
+      // Ofy ignores nonexistent keys but the method contract specifies to throw if nonexistent
+      throw new NoSuchElementException(
+          String.format("Failed to load nonexistent entities for keys: %s", missingKeys));
+    }
+    return result;
+  }
+
+  @Override
+  public <T> T loadByEntity(T entity) {
+    return ofy().load().entity(entity).now();
+  }
+
+  @Override
+  public <T> ImmutableList<T> loadByEntities(Iterable<T> entities) {
+    ImmutableList<T> result = loadByEntitiesIfPresent(entities);
+    if (result.size() != Iterables.size(entities)) {
+      throw new NoSuchElementException(
+          String.format("Attempted to load entities, some of which are missing: %s", entities));
+    }
+    return result;
+  }
+
+  @Override
+  public <T> ImmutableList<T> loadAllOf(Class<T> clazz) {
+    return ImmutableList.copyOf(getOfy().load().type(clazz));
   }
 
   @Override
   public void delete(VKey<?> key) {
-    getOfy().delete().key(key.getOfyKey()).now();
+    syncIfTransactionless(getOfy().delete().key(key.getOfyKey()));
   }
 
   @Override
@@ -192,7 +262,50 @@ public class DatastoreTransactionManager implements TransactionManager {
         StreamSupport.stream(vKeys.spliterator(), false)
             .map(VKey::getOfyKey)
             .collect(toImmutableList());
-    getOfy().delete().keys(list).now();
+    syncIfTransactionless(getOfy().delete().keys(list));
+  }
+
+  @Override
+  public void delete(Object entity) {
+    syncIfTransactionless(getOfy().delete().entity(entity));
+  }
+
+  @Override
+  public void deleteWithoutBackup(VKey<?> key) {
+    syncIfTransactionless(getOfy().deleteWithoutBackup().key(key.getOfyKey()));
+  }
+
+  @Override
+  public void deleteWithoutBackup(Iterable<? extends VKey<?>> keys) {
+    syncIfTransactionless(
+        getOfy()
+            .deleteWithoutBackup()
+            .keys(Streams.stream(keys).map(VKey::getOfyKey).collect(toImmutableList())));
+  }
+
+  @Override
+  public void deleteWithoutBackup(Object entity) {
+    syncIfTransactionless(getOfy().deleteWithoutBackup().entity(entity));
+  }
+
+  @Override
+  public void clearSessionCache() {
+    getOfy().clearSessionCache();
+  }
+
+  /**
+   * Executes the given {@link Result} instance synchronously if not in a transaction.
+   *
+   * <p>The {@link Result} instance contains a task that will be executed by Objectify
+   * asynchronously. If it is in a transaction, we don't need to execute the task immediately
+   * because it is guaranteed to be done by the end of the transaction. However, if it is not in a
+   * transaction, we need to execute it in case the following code expects that happens before
+   * themselves.
+   */
+  private void syncIfTransactionless(Result<?> result) {
+    if (!inTransaction()) {
+      result.now();
+    }
   }
 
   /**
@@ -209,22 +322,26 @@ public class DatastoreTransactionManager implements TransactionManager {
     if (entity instanceof HistoryEntry) {
       entity = ((HistoryEntry) entity).asHistoryEntry();
     }
-    getOfy().save().entity(entity);
-  }
-
-  @SuppressWarnings("unchecked")
-  private <T> T toChildHistoryEntryIfPossible(@Nullable T obj) {
-    // NB: The Key of the object in question may not necessarily be the resulting class that we
-    // wish to have. Because all *History classes are @EntitySubclasses, their Keys will have type
-    // HistoryEntry -- even if you create them based off the *History class.
-    if (obj != null && HistoryEntry.class.isAssignableFrom(obj.getClass())) {
-      return (T) ((HistoryEntry) obj).toChildHistoryEntity();
-    }
-    return obj;
+    syncIfTransactionless(getOfy().save().entity(entity));
   }
 
   @Nullable
   private <T> T loadNullable(VKey<T> key) {
     return toChildHistoryEntryIfPossible(getOfy().load().key(key.getOfyKey()).now());
+  }
+
+  /** Converts a nonnull {@link HistoryEntry} to the child format, e.g. {@link DomainHistory} */
+  @SuppressWarnings("unchecked")
+  public static <T> T toChildHistoryEntryIfPossible(@Nullable T obj) {
+    // NB: The Key of the object in question may not necessarily be the resulting class that we
+    // wish to have. Because all *History classes are @EntitySubclasses, their Keys will have type
+    // HistoryEntry -- even if you create them based off the *History class.
+    if (obj instanceof HistoryEntry
+        && !(obj instanceof ContactHistory)
+        && !(obj instanceof DomainHistory)
+        && !(obj instanceof HostHistory)) {
+      return (T) ((HistoryEntry) obj).toChildHistoryEntity();
+    }
+    return obj;
   }
 }

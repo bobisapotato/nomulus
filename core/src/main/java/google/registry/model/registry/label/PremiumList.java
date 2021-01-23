@@ -25,7 +25,6 @@ import static google.registry.model.common.EntityGroupRoot.getCrossTldKey;
 import static google.registry.model.ofy.ObjectifyService.allocateId;
 import static google.registry.model.ofy.ObjectifyService.ofy;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Splitter;
@@ -33,7 +32,6 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.CacheLoader.InvalidCacheLoadException;
 import com.google.common.cache.LoadingCache;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.hash.BloomFilter;
 import com.google.common.util.concurrent.UncheckedExecutionException;
@@ -46,9 +44,8 @@ import google.registry.model.Buildable;
 import google.registry.model.ImmutableObject;
 import google.registry.model.annotations.ReportedOn;
 import google.registry.model.registry.Registry;
-import google.registry.schema.replay.DatastoreAndSqlEntity;
-import google.registry.schema.replay.DatastoreEntity;
-import google.registry.schema.replay.SqlEntity;
+import google.registry.schema.replay.DatastoreOnlyEntity;
+import google.registry.schema.replay.NonReplicatedEntity;
 import google.registry.schema.tld.PremiumListDao;
 import google.registry.util.NonFinalForTesting;
 import java.io.ByteArrayOutputStream;
@@ -56,6 +53,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -89,7 +87,7 @@ import org.joda.time.Duration;
 @javax.persistence.Entity
 @Table(indexes = {@Index(columnList = "name", name = "premiumlist_name_idx")})
 public final class PremiumList extends BaseDomainLabelList<Money, PremiumList.PremiumListEntry>
-    implements DatastoreAndSqlEntity {
+    implements NonReplicatedEntity {
 
   /** Stores the revision key for the set of currently used premium list entry entities. */
   @Transient Key<PremiumListRevision> revisionKey;
@@ -114,7 +112,7 @@ public final class PremiumList extends BaseDomainLabelList<Money, PremiumList.Pr
   /** Virtual parent entity for premium list entry entities associated with a single revision. */
   @ReportedOn
   @Entity
-  public static class PremiumListRevision extends ImmutableObject implements DatastoreEntity {
+  public static class PremiumListRevision extends ImmutableObject implements DatastoreOnlyEntity {
 
     @Parent Key<PremiumList> parent;
 
@@ -171,11 +169,6 @@ public final class PremiumList extends BaseDomainLabelList<Money, PremiumList.Pr
       }
       return revision;
     }
-
-    @Override
-    public ImmutableList<SqlEntity> toSqlEntities() {
-      return ImmutableList.of(); // not persisted in SQL
-    }
   }
 
   /**
@@ -197,7 +190,7 @@ public final class PremiumList extends BaseDomainLabelList<Money, PremiumList.Pr
   @VisibleForTesting
   static LoadingCache<String, PremiumList> createCachePremiumLists(Duration cachePersistDuration) {
     return CacheBuilder.newBuilder()
-        .expireAfterWrite(cachePersistDuration.getMillis(), MILLISECONDS)
+        .expireAfterWrite(java.time.Duration.ofMillis(cachePersistDuration.getMillis()))
         .build(
             new CacheLoader<String, PremiumList>() {
               @Override
@@ -208,7 +201,9 @@ public final class PremiumList extends BaseDomainLabelList<Money, PremiumList.Pr
   }
 
   private static PremiumList loadPremiumList(String name) {
-    return ofy().load().type(PremiumList.class).parent(getCrossTldKey()).id(name).now();
+    return tm().isOfy()
+        ? ofy().load().type(PremiumList.class).parent(getCrossTldKey()).id(name).now()
+        : PremiumListDao.getLatestRevision(name).orElseThrow(NoSuchElementException::new);
   }
 
   /**
@@ -221,7 +216,8 @@ public final class PremiumList extends BaseDomainLabelList<Money, PremiumList.Pr
   static final LoadingCache<Key<PremiumListRevision>, PremiumListRevision>
       cachePremiumListRevisions =
           CacheBuilder.newBuilder()
-              .expireAfterWrite(getSingletonCachePersistDuration().getMillis(), MILLISECONDS)
+              .expireAfterWrite(
+                  java.time.Duration.ofMillis(getSingletonCachePersistDuration().getMillis()))
               .build(
                   new CacheLoader<Key<PremiumListRevision>, PremiumListRevision>() {
                     @Override
@@ -260,14 +256,14 @@ public final class PremiumList extends BaseDomainLabelList<Money, PremiumList.Pr
   static LoadingCache<Key<PremiumListEntry>, Optional<PremiumListEntry>>
       createCachePremiumListEntries(Duration cachePersistDuration) {
     return CacheBuilder.newBuilder()
-        .expireAfterWrite(cachePersistDuration.getMillis(), MILLISECONDS)
+        .expireAfterWrite(java.time.Duration.ofMillis(cachePersistDuration.getMillis()))
         .maximumSize(getStaticPremiumListMaxCachedEntries())
         .build(
             new CacheLoader<Key<PremiumListEntry>, Optional<PremiumListEntry>>() {
               @Override
               public Optional<PremiumListEntry> load(final Key<PremiumListEntry> entryKey) {
-                return tm()
-                    .doTransactionless(() -> Optional.ofNullable(ofy().load().key(entryKey).now()));
+                return tm().doTransactionless(
+                        () -> Optional.ofNullable(ofy().load().key(entryKey).now()));
               }
             });
   }
@@ -329,7 +325,7 @@ public final class PremiumList extends BaseDomainLabelList<Money, PremiumList.Pr
   @ReportedOn
   @Entity
   public static class PremiumListEntry extends DomainLabelEntry<Money, PremiumListEntry>
-      implements Buildable, DatastoreEntity {
+      implements Buildable, DatastoreOnlyEntity {
 
     @Parent
     Key<PremiumListRevision> parent;
@@ -344,11 +340,6 @@ public final class PremiumList extends BaseDomainLabelList<Money, PremiumList.Pr
     @Override
     public Builder asBuilder() {
       return new Builder(clone(this));
-    }
-
-    @Override
-    public ImmutableList<SqlEntity> toSqlEntities() {
-      return null;
     }
 
     /** A builder for constructing {@link PremiumListEntry} objects, since they are immutable. */

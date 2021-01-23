@@ -18,7 +18,6 @@ import static com.googlecode.objectify.Key.getKind;
 import static google.registry.util.CollectionUtils.nullToEmptyImmutableCopy;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.googlecode.objectify.Key;
 import com.googlecode.objectify.annotation.Entity;
@@ -32,17 +31,20 @@ import google.registry.model.EppResource;
 import google.registry.model.ImmutableObject;
 import google.registry.model.annotations.ReportedOn;
 import google.registry.model.contact.ContactHistory;
+import google.registry.model.contact.ContactHistory.ContactHistoryId;
 import google.registry.model.contact.ContactResource;
 import google.registry.model.domain.DomainBase;
 import google.registry.model.domain.DomainHistory;
+import google.registry.model.domain.DomainHistory.DomainHistoryId;
 import google.registry.model.domain.Period;
 import google.registry.model.eppcommon.Trid;
 import google.registry.model.host.HostHistory;
+import google.registry.model.host.HostHistory.HostHistoryId;
 import google.registry.model.host.HostResource;
 import google.registry.persistence.VKey;
-import google.registry.persistence.WithStringVKey;
 import google.registry.schema.replay.DatastoreEntity;
 import google.registry.schema.replay.SqlEntity;
+import java.util.Optional;
 import java.util.Set;
 import javax.annotation.Nullable;
 import javax.persistence.Access;
@@ -60,7 +62,6 @@ import org.joda.time.DateTime;
 @ReportedOn
 @Entity
 @MappedSuperclass
-@WithStringVKey // TODO(b/162229294): This should be resolved during the course of that bug
 @Access(AccessType.FIELD)
 public class HistoryEntry extends ImmutableObject implements Buildable, DatastoreEntity {
 
@@ -137,8 +138,12 @@ public class HistoryEntry extends ImmutableObject implements Buildable, Datastor
   @Transient // domain-specific
   Period period;
 
-  /** The actual EPP xml of the command, stored as bytes to be agnostic of encoding. */
-  @Column(nullable = false, name = "historyXmlBytes")
+  /**
+   * The actual EPP xml of the command, stored as bytes to be agnostic of encoding.
+   *
+   * <p>Changes performed by backend actions would not have EPP requests to store.
+   */
+  @Column(name = "historyXmlBytes")
   byte[] xmlBytes;
 
   /** The time the command occurred, represented by the ofy transaction time. */
@@ -182,7 +187,7 @@ public class HistoryEntry extends ImmutableObject implements Buildable, Datastor
   String reason;
 
   /** Whether this change was requested by a registrar. */
-  @Column(nullable = false, name = "historyRequestedByRegistrar")
+  @Column(name = "historyRequestedByRegistrar")
   Boolean requestedByRegistrar;
 
   /**
@@ -193,7 +198,8 @@ public class HistoryEntry extends ImmutableObject implements Buildable, Datastor
    * transaction counts (such as contact or host mutations).
    */
   @Transient // domain-specific
-  Set<DomainTransactionRecord> domainTransactionRecords;
+  @ImmutableObject.EmptySetToNull
+  protected Set<DomainTransactionRecord> domainTransactionRecords;
 
   public long getId() {
     // For some reason, Hibernate throws NPE during some initialization phase if we don't deal with
@@ -273,20 +279,8 @@ public class HistoryEntry extends ImmutableObject implements Buildable, Datastor
   /** This method exists solely to satisfy Hibernate. Use the {@link Builder} instead. */
   @SuppressWarnings("UnusedMethod")
   private void setDomainTransactionRecords(Set<DomainTransactionRecord> domainTransactionRecords) {
-    this.domainTransactionRecords = ImmutableSet.copyOf(domainTransactionRecords);
-  }
-
-  public static VKey<HistoryEntry> createVKey(Key<HistoryEntry> key) {
-    // TODO(b/159207551): This will likely need some revision.  As it stands, this method was
-    // introduced purely to facilitate testing of VKey specialization in VKeyTranslatorFactory.
-    // This class will likely require that functionality, though perhaps not this implementation of
-    // it.
-    // For now, just assume that the primary key of a history entry is comprised of the parent
-    // type, key and the object identifer.
-    return VKey.create(
-        HistoryEntry.class,
-        key.getParent().getKind() + "/" + key.getParent().getName() + "/" + key.getId(),
-        key);
+    this.domainTransactionRecords =
+        domainTransactionRecords == null ? null : ImmutableSet.copyOf(domainTransactionRecords);
   }
 
   @Override
@@ -321,8 +315,35 @@ public class HistoryEntry extends ImmutableObject implements Buildable, Datastor
 
   // In SQL, save the child type
   @Override
-  public ImmutableList<SqlEntity> toSqlEntities() {
-    return ImmutableList.of((SqlEntity) toChildHistoryEntity());
+  public Optional<SqlEntity> toSqlEntity() {
+    return Optional.of((SqlEntity) toChildHistoryEntity());
+  }
+
+  /** Creates a {@link VKey} instance from a {@link Key} instance. */
+  public static VKey<? extends HistoryEntry> createVKey(Key<HistoryEntry> key) {
+    String repoId = key.getParent().getName();
+    long id = key.getId();
+    Key<EppResource> parent = key.getParent();
+    String parentKind = parent.getKind();
+    if (parentKind.equals(getKind(DomainBase.class))) {
+      return VKey.create(
+          DomainHistory.class,
+          new DomainHistoryId(repoId, id),
+          Key.create(parent, DomainHistory.class, id));
+    } else if (parentKind.equals(getKind(HostResource.class))) {
+      return VKey.create(
+          HostHistory.class,
+          new HostHistoryId(repoId, id),
+          Key.create(parent, HostHistory.class, id));
+    } else if (parentKind.equals(getKind(ContactResource.class))) {
+      return VKey.create(
+          ContactHistory.class,
+          new ContactHistoryId(repoId, id),
+          Key.create(parent, ContactHistory.class, id));
+    } else {
+      throw new IllegalStateException(
+          String.format("Unknown kind of HistoryEntry parent %s", parentKind));
+    }
   }
 
   /** A builder for {@link HistoryEntry} since it is immutable */

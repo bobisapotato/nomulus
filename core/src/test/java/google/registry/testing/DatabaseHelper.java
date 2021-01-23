@@ -18,6 +18,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Suppliers.memoize;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.collect.Iterables.toArray;
 import static com.google.common.collect.MoreCollectors.onlyElement;
 import static com.google.common.truth.Truth.assertThat;
@@ -33,6 +34,8 @@ import static google.registry.model.ofy.ObjectifyService.ofy;
 import static google.registry.model.registry.Registry.TldState.GENERAL_AVAILABILITY;
 import static google.registry.model.registry.label.PremiumListUtils.parentPremiumListEntriesOnRevision;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
+import static google.registry.persistence.transaction.TransactionManagerUtil.ofyTmOrDoNothing;
+import static google.registry.persistence.transaction.TransactionManagerUtil.transactIfJpaTm;
 import static google.registry.pricing.PricingEngineProxy.getDomainRenewCost;
 import static google.registry.util.CollectionUtils.difference;
 import static google.registry.util.CollectionUtils.union;
@@ -44,6 +47,7 @@ import static google.registry.util.PreconditionsUtils.checkArgumentPresent;
 import static google.registry.util.ResourceUtils.readResourceUtf8;
 import static java.util.Arrays.asList;
 import static org.joda.money.CurrencyUnit.USD;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import com.google.common.base.Ascii;
 import com.google.common.base.Splitter;
@@ -60,22 +64,27 @@ import google.registry.dns.writer.VoidDnsWriter;
 import google.registry.model.Buildable;
 import google.registry.model.EppResource;
 import google.registry.model.EppResource.ForeignKeyedEppResource;
-import google.registry.model.ImmutableObject;
 import google.registry.model.billing.BillingEvent;
 import google.registry.model.billing.BillingEvent.Flag;
 import google.registry.model.billing.BillingEvent.Reason;
 import google.registry.model.contact.ContactAuthInfo;
+import google.registry.model.contact.ContactBase;
+import google.registry.model.contact.ContactHistory;
 import google.registry.model.contact.ContactResource;
 import google.registry.model.domain.DesignatedContact;
 import google.registry.model.domain.DesignatedContact.Type;
 import google.registry.model.domain.DomainAuthInfo;
 import google.registry.model.domain.DomainBase;
+import google.registry.model.domain.DomainContent;
+import google.registry.model.domain.DomainHistory;
 import google.registry.model.domain.GracePeriod;
 import google.registry.model.domain.rgp.GracePeriodStatus;
 import google.registry.model.domain.token.AllocationToken;
 import google.registry.model.eppcommon.AuthInfo.PasswordAuth;
 import google.registry.model.eppcommon.StatusValue;
 import google.registry.model.eppcommon.Trid;
+import google.registry.model.host.HostBase;
+import google.registry.model.host.HostHistory;
 import google.registry.model.host.HostResource;
 import google.registry.model.index.EppResourceIndex;
 import google.registry.model.index.EppResourceIndexBucket;
@@ -100,14 +109,26 @@ import google.registry.model.transfer.TransferStatus;
 import google.registry.persistence.VKey;
 import google.registry.tmch.LordnTaskUtils;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
+import org.joda.money.CurrencyUnit;
 import org.joda.money.Money;
 import org.joda.time.DateTime;
+import org.joda.time.DateTimeZone;
 
 /** Static utils for setting up test resources. */
-public class DatastoreHelper {
+public class DatabaseHelper {
+
+  // The following two fields are injected by ReplayExtension.
+
+  // If this is true, all of the methods that save to the datastore do so with backup.
+  private static boolean alwaysSaveWithBackup;
+
+  // If the clock is defined, it will always be advanced by one millsecond after a transaction.
+  private static FakeClock clock;
 
   private static final Supplier<String[]> DEFAULT_PREMIUM_LIST_CONTENTS =
       memoize(
@@ -116,8 +137,22 @@ public class DatastoreHelper {
                   Splitter.on('\n')
                       .split(
                           readResourceUtf8(
-                              DatastoreHelper.class, "default_premium_list_testdata.csv")),
+                              DatabaseHelper.class, "default_premium_list_testdata.csv")),
                   String.class));
+
+  public static void setAlwaysSaveWithBackup(boolean enable) {
+    alwaysSaveWithBackup = enable;
+  }
+
+  public static void setClock(FakeClock fakeClock) {
+    clock = fakeClock;
+  }
+
+  private static void maybeAdvanceClock() {
+    if (clock != null) {
+      clock.advanceOneMilli();
+    }
+  }
 
   public static HostResource newHostResource(String hostName) {
     return newHostResourceWithRoid(hostName, generateNewContactHostRoid());
@@ -299,6 +334,7 @@ public class DatastoreHelper {
     // the
     // transaction time is set correctly.
     tm().transactNew(() -> LordnTaskUtils.enqueueDomainBaseTask(persistedDomain));
+    maybeAdvanceClock();
     return persistedDomain;
   }
 
@@ -308,12 +344,20 @@ public class DatastoreHelper {
 
   public static ReservedList persistReservedList(
     String listName, boolean shouldPublish, String... lines) {
-    return persistResource(
+    ReservedList reservedList =
         new ReservedList.Builder()
             .setName(listName)
             .setReservedListMapFromLines(ImmutableList.copyOf(lines))
             .setShouldPublish(shouldPublish)
-            .build());
+            .setLastUpdateTime(DateTime.now(DateTimeZone.UTC))
+            .build();
+    return tm().isOfy()
+        ? persistResource(reservedList)
+        : tm().transact(
+                () -> {
+                  tm().insert(reservedList);
+                  return reservedList;
+                });
   }
 
   /**
@@ -325,18 +369,51 @@ public class DatastoreHelper {
    * the requirement to have monotonically increasing timestamps.
    */
   public static PremiumList persistPremiumList(String listName, String... lines) {
-    PremiumList premiumList = new PremiumList.Builder().setName(listName).build();
-    ImmutableMap<String, PremiumListEntry> entries = premiumList.parse(asList(lines));
+    checkState(lines.length != 0, "Must provide at least one premium entry");
+    PremiumList partialPremiumList = new PremiumList.Builder().setName(listName).build();
+    ImmutableMap<String, PremiumListEntry> entries = partialPremiumList.parse(asList(lines));
+    CurrencyUnit currencyUnit =
+        entries.entrySet().iterator().next().getValue().getValue().getCurrencyUnit();
+    PremiumList premiumList =
+        partialPremiumList
+            .asBuilder()
+            .setCreationTime(DateTime.now(DateTimeZone.UTC))
+            .setCurrency(currencyUnit)
+            .setLabelsToPrices(
+                entries.entrySet().stream()
+                    .collect(
+                        toImmutableMap(
+                            Map.Entry::getKey, entry -> entry.getValue().getValue().getAmount())))
+            .build();
     PremiumListRevision revision = PremiumListRevision.create(premiumList, entries.keySet());
-    ofy()
-        .saveWithoutBackup()
-        .entities(premiumList.asBuilder().setRevision(Key.create(revision)).build(), revision)
-        .now();
-    ofy()
-        .saveWithoutBackup()
-        .entities(parentPremiumListEntriesOnRevision(entries.values(), Key.create(revision)))
-        .now();
-    return ofy().load().entity(premiumList).now();
+
+    if (tm().isOfy()) {
+      ImmutableList<Object> premiumLists =
+          ImmutableList.of(
+              premiumList.asBuilder().setRevision(Key.create(revision)).build(), revision);
+      ImmutableSet<PremiumListEntry> entriesOnRevision =
+          parentPremiumListEntriesOnRevision(entries.values(), Key.create(revision));
+      if (alwaysSaveWithBackup) {
+        tm().transact(
+                () -> {
+                  tm().putAll(premiumLists);
+                  tm().putAll(entriesOnRevision);
+                });
+      } else {
+        tm().putAllWithoutBackup(premiumLists);
+        tm().putAllWithoutBackup(entriesOnRevision);
+      }
+    } else {
+      tm().transact(() -> tm().insert(premiumList));
+    }
+    maybeAdvanceClock();
+    // The above premiumList is in the session cache and it is different from the corresponding
+    // entity stored in Datastore because it has some @Ignore fields set dedicated for SQL. This
+    // breaks the assumption we have in our application code, see
+    // PremiumListUtils.savePremiumListAndEntries(). Clearing the session cache can help make sure
+    // we always get the same list.
+    tm().clearSessionCache();
+    return transactIfJpaTm(() -> tm().loadByEntity(premiumList));
   }
 
   /** Creates and persists a tld. */
@@ -455,11 +532,14 @@ public class DatastoreHelper {
       DateTime requestTime,
       DateTime expirationTime,
       DateTime now) {
-    HistoryEntry historyEntryContactTransfer = persistResource(
-        new HistoryEntry.Builder()
-            .setType(HistoryEntry.Type.CONTACT_TRANSFER_REQUEST)
-            .setParent(contact)
-            .build());
+    HistoryEntry historyEntryContactTransfer =
+        persistResource(
+            new HistoryEntry.Builder()
+                .setType(HistoryEntry.Type.CONTACT_TRANSFER_REQUEST)
+                .setParent(persistResource(contact))
+                .setModificationTime(now)
+                .build()
+                .toChildHistoryEntity());
     return persistResource(
         contact
             .asBuilder()
@@ -561,11 +641,13 @@ public class DatastoreHelper {
       DateTime requestTime,
       DateTime expirationTime,
       DateTime extendedRegistrationExpirationTime) {
-    HistoryEntry historyEntryDomainTransfer = persistResource(
-        new HistoryEntry.Builder()
-            .setType(HistoryEntry.Type.DOMAIN_TRANSFER_REQUEST)
-            .setParent(domain)
-            .build());
+    HistoryEntry historyEntryDomainTransfer =
+        persistResource(
+            new HistoryEntry.Builder()
+                .setType(HistoryEntry.Type.DOMAIN_TRANSFER_REQUEST)
+                .setModificationTime(tm().transact(() -> tm().getTransactionTime()))
+                .setParent(domain)
+                .build());
     BillingEvent.OneTime transferBillingEvent = persistResource(createBillingEventForTransfer(
             domain,
             historyEntryDomainTransfer,
@@ -594,13 +676,13 @@ public class DatastoreHelper {
                 .build());
     // Modify the existing autorenew event to reflect the pending transfer.
     persistResource(
-        tm().load(domain.getAutorenewBillingEvent())
+        tm().loadByKey(domain.getAutorenewBillingEvent())
             .asBuilder()
             .setRecurrenceEndTime(expirationTime)
             .build());
     // Update the end time of the existing autorenew poll message. We must delete it if it has no
     // events left in it.
-    PollMessage.Autorenew autorenewPollMessage = tm().load(domain.getAutorenewPollMessage());
+    PollMessage.Autorenew autorenewPollMessage = tm().loadByKey(domain.getAutorenewPollMessage());
     if (autorenewPollMessage.getEventTime().isBefore(expirationTime)) {
       persistResource(
           autorenewPollMessage.asBuilder()
@@ -671,18 +753,43 @@ public class DatastoreHelper {
             .build());
   }
 
+  /** Persists and returns a {@link Registrar} with the specified registrarId. */
+  public static Registrar persistNewRegistrar(String registrarId) {
+    return persistNewRegistrar(registrarId, registrarId + " name", Registrar.Type.REAL, 100L);
+  }
+
+  /** Persists and returns a list of {@link Registrar}s with the specified registrarIds. */
+  public static ImmutableList<Registrar> persistNewRegistrars(String... registrarIds) {
+    ImmutableList.Builder<Registrar> newRegistrars = new ImmutableList.Builder<>();
+    for (String registrarId : registrarIds) {
+      newRegistrars.add(persistNewRegistrar(registrarId));
+    }
+    return newRegistrars.build();
+  }
+
   private static Iterable<BillingEvent> getBillingEvents() {
-    return Iterables.concat(
-        ofy().load().type(BillingEvent.OneTime.class),
-        ofy().load().type(BillingEvent.Recurring.class),
-        ofy().load().type(BillingEvent.Cancellation.class));
+    return transactIfJpaTm(
+        () ->
+            Iterables.concat(
+                tm().loadAllOf(BillingEvent.OneTime.class),
+                tm().loadAllOf(BillingEvent.Recurring.class),
+                tm().loadAllOf(BillingEvent.Cancellation.class)));
   }
 
   private static Iterable<BillingEvent> getBillingEvents(EppResource resource) {
-    return Iterables.concat(
-        ofy().load().type(BillingEvent.OneTime.class).ancestor(resource),
-        ofy().load().type(BillingEvent.Recurring.class).ancestor(resource),
-        ofy().load().type(BillingEvent.Cancellation.class).ancestor(resource));
+    return transactIfJpaTm(
+        () ->
+            Iterables.concat(
+                tm().loadAllOf(BillingEvent.OneTime.class).stream()
+                    .filter(oneTime -> oneTime.getDomainRepoId().equals(resource.getRepoId()))
+                    .collect(toImmutableList()),
+                tm().loadAllOf(BillingEvent.Recurring.class).stream()
+                    .filter(recurring -> recurring.getDomainRepoId().equals(resource.getRepoId()))
+                    .collect(toImmutableList()),
+                tm().loadAllOf(BillingEvent.Cancellation.class).stream()
+                    .filter(
+                        cancellation -> cancellation.getDomainRepoId().equals(resource.getRepoId()))
+                    .collect(toImmutableList())));
   }
 
   /** Assert that the actual billing event matches the expected one, ignoring IDs. */
@@ -751,41 +858,63 @@ public class DatastoreHelper {
     assertPollMessagesEqual(getPollMessages(), Arrays.asList(expected));
   }
 
-  public static void assertPollMessagesForResource(EppResource resource, PollMessage... expected) {
-    assertPollMessagesEqual(getPollMessages(resource), Arrays.asList(expected));
+  public static void assertPollMessagesForResource(DomainContent domain, PollMessage... expected) {
+    assertPollMessagesEqual(getPollMessages(domain), Arrays.asList(expected));
   }
 
   public static ImmutableList<PollMessage> getPollMessages() {
-    return ImmutableList.copyOf(ofy().load().type(PollMessage.class));
+    return ImmutableList.copyOf(transactIfJpaTm(() -> tm().loadAllOf(PollMessage.class)));
   }
 
   public static ImmutableList<PollMessage> getPollMessages(String clientId) {
-    return ImmutableList.copyOf(ofy().load().type(PollMessage.class).filter("clientId", clientId));
+    return transactIfJpaTm(
+        () ->
+            tm().loadAllOf(PollMessage.class).stream()
+                .filter(pollMessage -> pollMessage.getClientId().equals(clientId))
+                .collect(toImmutableList()));
   }
 
-  public static ImmutableList<PollMessage> getPollMessages(EppResource resource) {
-    return ImmutableList.copyOf(ofy().load().type(PollMessage.class).ancestor(resource));
+  public static ImmutableList<PollMessage> getPollMessages(DomainContent domain) {
+    return transactIfJpaTm(
+        () ->
+            tm().loadAllOf(PollMessage.class).stream()
+                .filter(
+                    pollMessage ->
+                        pollMessage.getParentKey().getParent().getName().equals(domain.getRepoId()))
+                .collect(toImmutableList()));
   }
 
   public static ImmutableList<PollMessage> getPollMessages(String clientId, DateTime now) {
-    return ImmutableList.copyOf(
-        ofy()
-            .load()
-            .type(PollMessage.class)
-            .filter("clientId", clientId)
-            .filter("eventTime <=", now.toDate()));
+    return transactIfJpaTm(
+        () ->
+            tm().loadAllOf(PollMessage.class).stream()
+                .filter(pollMessage -> pollMessage.getClientId().equals(clientId))
+                .filter(
+                    pollMessage ->
+                        pollMessage.getEventTime().isEqual(now)
+                            || pollMessage.getEventTime().isBefore(now))
+                .collect(toImmutableList()));
   }
 
   /** Gets all PollMessages associated with the given EppResource. */
   public static ImmutableList<PollMessage> getPollMessages(
       EppResource resource, String clientId, DateTime now) {
-    return ImmutableList.copyOf(
-        ofy()
-            .load()
-            .type(PollMessage.class)
-            .ancestor(resource)
-            .filter("clientId", clientId)
-            .filter("eventTime <=", now.toDate()));
+    return transactIfJpaTm(
+        () ->
+            tm().loadAllOf(PollMessage.class).stream()
+                .filter(
+                    pollMessage ->
+                        pollMessage
+                            .getParentKey()
+                            .getParent()
+                            .getName()
+                            .equals(resource.getRepoId()))
+                .filter(pollMessage -> pollMessage.getClientId().equals(clientId))
+                .filter(
+                    pollMessage ->
+                        pollMessage.getEventTime().isEqual(now)
+                            || pollMessage.getEventTime().isBefore(now))
+                .collect(toImmutableList()));
   }
 
   public static PollMessage getOnlyPollMessage(String clientId) {
@@ -808,19 +937,15 @@ public class DatastoreHelper {
   }
 
   public static PollMessage getOnlyPollMessage(
-      EppResource resource,
-      String clientId,
-      DateTime now,
-      Class<? extends PollMessage> subType) {
-    return getPollMessages(resource, clientId, now)
-        .stream()
+      DomainContent domain, String clientId, DateTime now, Class<? extends PollMessage> subType) {
+    return getPollMessages(domain, clientId, now).stream()
         .filter(subType::isInstance)
         .map(subType::cast)
         .collect(onlyElement());
   }
 
   public static void assertAllocationTokens(AllocationToken... expectedTokens) {
-    assertThat(ofy().load().type(AllocationToken.class).list())
+    assertThat(transactIfJpaTm(() -> tm().loadAllOf(AllocationToken.class)))
         .comparingElementsUsing(immutableObjectCorrespondence("updateTimestamp", "creationTime"))
         .containsExactlyElementsIn(expectedTokens);
   }
@@ -861,12 +986,16 @@ public class DatastoreHelper {
   }
 
   private static <R> void saveResource(R resource, boolean wantBackup) {
-    Saver saver = wantBackup ? ofy().save() : ofy().saveWithoutBackup();
-    saver.entity(resource);
-    if (resource instanceof EppResource) {
-      EppResource eppResource = (EppResource) resource;
-      persistEppResourceExtras(
-          eppResource, EppResourceIndex.create(Key.create(eppResource)), saver);
+    if (tm().isOfy()) {
+      Saver saver = wantBackup || alwaysSaveWithBackup ? ofy().save() : ofy().saveWithoutBackup();
+      saver.entity(resource);
+      if (resource instanceof EppResource) {
+        EppResource eppResource = (EppResource) resource;
+        persistEppResourceExtras(
+            eppResource, EppResourceIndex.create(Key.create(eppResource)), saver);
+      }
+    } else {
+      tm().put(resource);
     }
   }
 
@@ -886,27 +1015,32 @@ public class DatastoreHelper {
         .that(resource)
         .isNotInstanceOf(Buildable.Builder.class);
     tm().transact(() -> saveResource(resource, wantBackup));
+    maybeAdvanceClock();
     // Force the session cache to be cleared so that when we read the resource back, we read from
     // Datastore and not from the session cache. This is needed to trigger Objectify's load process
     // (unmarshalling entity protos to POJOs, nulling out empty collections, calling @OnLoad
     // methods, etc.) which is bypassed for entities loaded from the session cache.
-    ofy().clearSessionCache();
-    return ofy().load().entity(resource).now();
+    tm().clearSessionCache();
+    return transactIfJpaTm(() -> tm().loadByEntity(resource));
   }
 
   /** Persists an EPP resource with the {@link EppResourceIndex} always going into bucket one. */
   public static <R extends EppResource> R persistEppResourceInFirstBucket(final R resource) {
     final EppResourceIndex eppResourceIndex =
         EppResourceIndex.create(Key.create(EppResourceIndexBucket.class, 1), Key.create(resource));
-    tm()
-        .transact(
+    tm().transact(
             () -> {
-              Saver saver = ofy().save();
-              saver.entity(resource);
-              persistEppResourceExtras(resource, eppResourceIndex, saver);
+              if (tm().isOfy()) {
+                Saver saver = ofy().save();
+                saver.entity(resource);
+                persistEppResourceExtras(resource, eppResourceIndex, saver);
+              } else {
+                tm().put(resource);
+              }
             });
-    ofy().clearSessionCache();
-    return ofy().load().entity(resource).now();
+    maybeAdvanceClock();
+    tm().clearSessionCache();
+    return transactIfJpaTm(() -> tm().loadByEntity(resource));
   }
 
   public static <R> void persistResources(final Iterable<R> resources) {
@@ -922,12 +1056,13 @@ public class DatastoreHelper {
     // Persist domains ten at a time, to avoid exceeding the entity group limit.
     for (final List<R> chunk : Iterables.partition(resources, 10)) {
       tm().transact(() -> chunk.forEach(resource -> saveResource(resource, wantBackup)));
+      maybeAdvanceClock();
     }
     // Force the session to be cleared so that when we read it back, we read from Datastore
     // and not from the transaction's session cache.
-    ofy().clearSessionCache();
+    tm().clearSessionCache();
     for (R resource : resources) {
-      ofy().load().entity(resource).now();
+      transactIfJpaTm(() -> tm().loadByEntity(resource));
     }
   }
 
@@ -943,31 +1078,49 @@ public class DatastoreHelper {
    */
   public static <R extends EppResource> R persistEppResource(final R resource) {
     checkState(!tm().inTransaction());
-    tm()
-        .transact(
+    tm().transact(
             () -> {
-              ofy()
-                  .save()
-                  .<ImmutableObject>entities(
-                      resource,
+              tm().put(resource);
+              tm().put(
                       new HistoryEntry.Builder()
                           .setParent(resource)
                           .setType(getHistoryEntryType(resource))
                           .setModificationTime(tm().getTransactionTime())
-                          .build());
-              ofy().save().entity(ForeignKeyIndex.create(resource, resource.getDeletionTime()));
+                          .build()
+                          .toChildHistoryEntity());
+              ofyTmOrDoNothing(
+                  () -> tm().put(ForeignKeyIndex.create(resource, resource.getDeletionTime())));
             });
-    ofy().clearSessionCache();
-    return ofy().load().entity(resource).safe();
+    maybeAdvanceClock();
+    tm().clearSessionCache();
+    return transactIfJpaTm(() -> tm().loadByEntity(resource));
   }
 
   /** Returns all of the history entries that are parented off the given EppResource. */
-  public static List<HistoryEntry> getHistoryEntries(EppResource resource) {
-    return ofy().load()
-        .type(HistoryEntry.class)
-        .ancestor(resource)
-        .order("modificationTime")
-        .list();
+  public static List<? extends HistoryEntry> getHistoryEntries(EppResource resource) {
+    return tm().isOfy()
+        ? ofy().load().type(HistoryEntry.class).ancestor(resource).order("modificationTime").list()
+        : tm().transact(
+                () -> {
+                  ImmutableList<? extends HistoryEntry> unsorted = null;
+                  if (resource instanceof ContactBase) {
+                    unsorted = tm().loadAllOf(ContactHistory.class);
+                  } else if (resource instanceof HostBase) {
+                    unsorted = tm().loadAllOf(HostHistory.class);
+                  } else if (resource instanceof DomainContent) {
+                    unsorted = tm().loadAllOf(DomainHistory.class);
+                  } else {
+                    fail("Expected an EppResource instance, but got " + resource.getClass());
+                  }
+                  ImmutableList<? extends HistoryEntry> filtered =
+                      unsorted.stream()
+                          .filter(
+                              historyEntry ->
+                                  historyEntry.getParent().getName().equals(resource.getRepoId()))
+                          .collect(toImmutableList());
+                  return ImmutableList.sortedCopyOf(
+                      Comparator.comparing(HistoryEntry::getModificationTime), filtered);
+                });
   }
 
   /**
@@ -1009,9 +1162,13 @@ public class DatastoreHelper {
   }
 
   public static PollMessage getOnlyPollMessageForHistoryEntry(HistoryEntry historyEntry) {
-    return Iterables.getOnlyElement(ofy().load()
-        .type(PollMessage.class)
-        .ancestor(historyEntry));
+    return Iterables.getOnlyElement(
+        transactIfJpaTm(
+            () ->
+                tm().loadAllOf(PollMessage.class).stream()
+                    .filter(
+                        pollMessage -> pollMessage.getParentKey().equals(Key.create(historyEntry)))
+                    .collect(toImmutableList())));
   }
 
   public static <T extends EppResource> HistoryEntry createHistoryEntryForEppResource(
@@ -1029,23 +1186,47 @@ public class DatastoreHelper {
    * ForeignKeyedEppResources.
    */
   public static <R> ImmutableList<R> persistSimpleResources(final Iterable<R> resources) {
-    tm().transact(() -> ofy().saveWithoutBackup().entities(resources));
+    tm().transact(
+            () -> {
+              if (alwaysSaveWithBackup) {
+                tm().putAll(ImmutableList.copyOf(resources));
+              } else {
+                tm().putAllWithoutBackup(ImmutableList.copyOf(resources));
+              }
+            });
+    maybeAdvanceClock();
     // Force the session to be cleared so that when we read it back, we read from Datastore
     // and not from the transaction's session cache.
-    ofy().clearSessionCache();
-    return ImmutableList.copyOf(ofy().load().entities(resources).values());
+    tm().clearSessionCache();
+    return transactIfJpaTm(() -> tm().loadByEntities(resources));
   }
 
   public static void deleteResource(final Object resource) {
-    ofy().deleteWithoutBackup().entity(resource).now();
+    if (alwaysSaveWithBackup) {
+      tm().transact(() -> tm().delete(resource));
+      maybeAdvanceClock();
+    } else {
+      transactIfJpaTm(() -> tm().deleteWithoutBackup(resource));
+    }
     // Force the session to be cleared so that when we read it back, we read from Datastore and
     // not from the transaction's session cache.
-    ofy().clearSessionCache();
+    tm().clearSessionCache();
   }
 
   /** Force the create and update timestamps to get written into the resource. **/
   public static <R> R cloneAndSetAutoTimestamps(final R resource) {
-    return tm().transact(() -> ofy().load().fromEntity(ofy().save().toEntity(resource)));
+    R result;
+    if (tm().isOfy()) {
+      result = tm().transact(() -> ofy().load().fromEntity(ofy().save().toEntity(resource)));
+    } else {
+      // We have to separate the read and write operation into different transactions
+      // otherwise JPA would just return the input entity instead of actually creating a
+      // clone.
+      tm().transact(() -> tm().put(resource));
+      result = tm().transact(() -> tm().loadByEntity(resource));
+    }
+    maybeAdvanceClock();
+    return result;
   }
 
   /** Returns the entire map of {@link PremiumListEntry}s for the given {@link PremiumList}. */
@@ -1074,5 +1255,5 @@ public class DatastoreHelper {
         clientId);
   }
 
-  private DatastoreHelper() {}
+  private DatabaseHelper() {}
 }

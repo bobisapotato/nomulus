@@ -19,7 +19,7 @@ import static com.google.common.truth.Fact.fact;
 import static com.google.common.truth.Fact.simpleFact;
 import static com.google.common.truth.OptionalSubject.optionals;
 import static google.registry.model.EppResourceUtils.isActive;
-import static google.registry.testing.DatastoreHelper.getHistoryEntriesOfType;
+import static google.registry.testing.DatabaseHelper.getHistoryEntriesOfType;
 import static google.registry.testing.HistoryEntrySubject.historyEntries;
 import static google.registry.util.DiffUtils.prettyPrintEntityDeepDiff;
 
@@ -49,8 +49,8 @@ abstract class AbstractEppResourceSubject<
     this.actual = subject;
   }
 
-  private List<HistoryEntry> getHistoryEntries() {
-    return DatastoreHelper.getHistoryEntries(actual);
+  private List<? extends HistoryEntry> getHistoryEntries() {
+    return DatabaseHelper.getHistoryEntries(actual);
   }
 
   @SuppressWarnings("unchecked")
@@ -120,7 +120,7 @@ abstract class AbstractEppResourceSubject<
   // TODO(weiminyu): Remove after next Truth update
   @SuppressWarnings("UnnecessaryParentheses")
   public Which<HistoryEntrySubject> hasHistoryEntryAtIndex(int index) {
-    List<HistoryEntry> historyEntries = getHistoryEntries();
+    List<? extends HistoryEntry> historyEntries = getHistoryEntries();
     check("getHistoryEntries().size()").that(historyEntries.size()).isAtLeast(index + 1);
     return new Which<>(
         check("getHistoryEntries(%s)", index)

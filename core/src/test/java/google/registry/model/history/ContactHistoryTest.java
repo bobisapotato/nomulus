@@ -18,7 +18,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static google.registry.model.ImmutableObjectSubject.assertAboutImmutableObjects;
 import static google.registry.persistence.transaction.TransactionManagerFactory.jpaTm;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
-import static google.registry.testing.DatastoreHelper.newContactResourceWithRoid;
+import static google.registry.testing.DatabaseHelper.newContactResourceWithRoid;
 import static google.registry.testing.SqlHelper.saveRegistrar;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -46,13 +46,13 @@ public class ContactHistoryTest extends EntityTestCase {
     ContactResource contact = newContactResourceWithRoid("contactId", "contact1");
     jpaTm().transact(() -> jpaTm().insert(contact));
     VKey<ContactResource> contactVKey = contact.createVKey();
-    ContactResource contactFromDb = jpaTm().transact(() -> jpaTm().load(contactVKey));
+    ContactResource contactFromDb = jpaTm().transact(() -> jpaTm().loadByKey(contactVKey));
     ContactHistory contactHistory = createContactHistory(contactFromDb, contact.getRepoId());
     jpaTm().transact(() -> jpaTm().insert(contactHistory));
     jpaTm()
         .transact(
             () -> {
-              ContactHistory fromDatabase = jpaTm().load(contactHistory.createVKey());
+              ContactHistory fromDatabase = jpaTm().loadByKey(contactHistory.createVKey());
               assertContactHistoriesEqual(fromDatabase, contactHistory);
               assertThat(fromDatabase.getParentVKey()).isEqualTo(contactHistory.getParentVKey());
             });
@@ -65,7 +65,7 @@ public class ContactHistoryTest extends EntityTestCase {
     ContactResource contact = newContactResourceWithRoid("contactId", "contact1");
     jpaTm().transact(() -> jpaTm().insert(contact));
     VKey<ContactResource> contactVKey = contact.createVKey();
-    ContactResource contactFromDb = jpaTm().transact(() -> jpaTm().load(contactVKey));
+    ContactResource contactFromDb = jpaTm().transact(() -> jpaTm().loadByKey(contactVKey));
     ContactHistory contactHistory =
         createContactHistory(contactFromDb, contact.getRepoId())
             .asBuilder()
@@ -76,7 +76,7 @@ public class ContactHistoryTest extends EntityTestCase {
     jpaTm()
         .transact(
             () -> {
-              ContactHistory fromDatabase = jpaTm().load(contactHistory.createVKey());
+              ContactHistory fromDatabase = jpaTm().loadByKey(contactHistory.createVKey());
               assertContactHistoriesEqual(fromDatabase, contactHistory);
               assertThat(fromDatabase.getParentVKey()).isEqualTo(contactHistory.getParentVKey());
             });
@@ -89,7 +89,7 @@ public class ContactHistoryTest extends EntityTestCase {
     ContactResource contact = newContactResourceWithRoid("contactId", "contact1");
     tm().transact(() -> tm().insert(contact));
     VKey<ContactResource> contactVKey = contact.createVKey();
-    ContactResource contactFromDb = tm().transact(() -> tm().load(contactVKey));
+    ContactResource contactFromDb = tm().transact(() -> tm().loadByKey(contactVKey));
     fakeClock.advanceOneMilli();
     ContactHistory contactHistory = createContactHistory(contactFromDb, contact.getRepoId());
     tm().transact(() -> tm().insert(contactHistory));
@@ -100,8 +100,8 @@ public class ContactHistoryTest extends EntityTestCase {
     VKey<ContactHistory> contactHistoryVKey = contactHistory.createVKey();
     VKey<HistoryEntry> historyEntryVKey =
         VKey.createOfy(HistoryEntry.class, Key.create(contactHistory.asHistoryEntry()));
-    ContactHistory hostHistoryFromDb = tm().transact(() -> tm().load(contactHistoryVKey));
-    HistoryEntry historyEntryFromDb = tm().transact(() -> tm().load(historyEntryVKey));
+    ContactHistory hostHistoryFromDb = tm().transact(() -> tm().loadByKey(contactHistoryVKey));
+    HistoryEntry historyEntryFromDb = tm().transact(() -> tm().loadByKey(historyEntryVKey));
 
     assertThat(hostHistoryFromDb).isEqualTo(historyEntryFromDb);
   }

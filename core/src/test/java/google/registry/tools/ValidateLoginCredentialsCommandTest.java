@@ -16,23 +16,28 @@ package google.registry.tools;
 
 import static com.google.common.truth.Truth.assertThat;
 import static google.registry.model.registrar.Registrar.State.ACTIVE;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.loadRegistrar;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.loadRegistrar;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static google.registry.testing.EppExceptionSubject.assertAboutEppExceptions;
+import static google.registry.util.DateTimeUtils.START_OF_TIME;
+import static org.joda.time.DateTimeZone.UTC;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.beust.jcommander.ParameterException;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedMap;
 import google.registry.flows.EppException;
 import google.registry.flows.TransportCredentials.BadRegistrarPasswordException;
+import google.registry.flows.certs.CertificateChecker;
 import google.registry.model.registrar.Registrar;
 import google.registry.model.registrar.Registrar.State;
 import google.registry.testing.CertificateSamples;
 import google.registry.util.CidrAddressBlock;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import org.joda.time.DateTime;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -40,7 +45,7 @@ import org.junit.jupiter.api.Test;
 class ValidateLoginCredentialsCommandTest extends CommandTestCase<ValidateLoginCredentialsCommand> {
 
   private static final String PASSWORD = "foo-BAR2";
-  private static final String CERT_HASH = CertificateSamples.SAMPLE_CERT_HASH;
+  private static final String CERT_HASH = CertificateSamples.SAMPLE_CERT3_HASH;
   private static final String CLIENT_IP = "1.2.3.4";
 
   @BeforeEach
@@ -50,11 +55,18 @@ class ValidateLoginCredentialsCommandTest extends CommandTestCase<ValidateLoginC
         loadRegistrar("NewRegistrar")
             .asBuilder()
             .setPassword(PASSWORD)
-            .setClientCertificateHash(CERT_HASH)
+            .setClientCertificate(CertificateSamples.SAMPLE_CERT3, DateTime.now(UTC))
             .setIpAddressAllowList(ImmutableList.of(new CidrAddressBlock(CLIENT_IP)))
             .setState(ACTIVE)
             .setAllowedTlds(ImmutableSet.of("tld"))
             .build());
+    command.certificateChecker =
+        new CertificateChecker(
+            ImmutableSortedMap.of(START_OF_TIME, 825, DateTime.parse("2020-09-01T00:00:00Z"), 398),
+            30,
+            2048,
+            ImmutableSet.of("secp256r1", "secp384r1"),
+            fakeClock);
   }
 
   @Test
@@ -62,7 +74,7 @@ class ValidateLoginCredentialsCommandTest extends CommandTestCase<ValidateLoginC
     runCommand(
         "--client=NewRegistrar",
         "--password=" + PASSWORD,
-        "--cert_hash=" + CERT_HASH,
+        "--cert_file=" + getCertFilename(CertificateSamples.SAMPLE_CERT3),
         "--ip_address=" + CLIENT_IP);
   }
 
@@ -81,7 +93,7 @@ class ValidateLoginCredentialsCommandTest extends CommandTestCase<ValidateLoginC
                 runCommand(
                     "--client=NewRegistrar",
                     "--password=" + PASSWORD,
-                    "--cert_hash=" + CERT_HASH,
+                    "--cert_file=" + getCertFilename(CertificateSamples.SAMPLE_CERT3),
                     "--ip_address=" + CLIENT_IP));
     assertThat(thrown)
         .hasMessageThat()
@@ -89,7 +101,7 @@ class ValidateLoginCredentialsCommandTest extends CommandTestCase<ValidateLoginC
   }
 
   @Test
-  void testFailure_loginWithBadPassword() {
+  void testFailure_loginWithBadPassword() throws Exception {
     EppException thrown =
         assertThrows(
             BadRegistrarPasswordException.class,
@@ -97,7 +109,7 @@ class ValidateLoginCredentialsCommandTest extends CommandTestCase<ValidateLoginC
                 runCommand(
                     "--client=NewRegistrar",
                     "--password=" + new StringBuilder(PASSWORD).reverse(),
-                    "--cert_hash=" + CERT_HASH,
+                    "--cert_file=" + getCertFilename(CertificateSamples.SAMPLE_CERT3),
                     "--ip_address=" + CLIENT_IP));
     assertAboutEppExceptions().that(thrown).marshalsToXml();
   }

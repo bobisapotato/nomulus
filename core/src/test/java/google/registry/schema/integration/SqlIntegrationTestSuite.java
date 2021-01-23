@@ -24,17 +24,23 @@ import google.registry.model.history.ContactHistoryTest;
 import google.registry.model.history.DomainHistoryTest;
 import google.registry.model.history.HostHistoryTest;
 import google.registry.model.poll.PollMessageTest;
+import google.registry.model.rde.RdeRevisionTest;
 import google.registry.model.registry.RegistryLockDaoTest;
 import google.registry.model.registry.RegistryTest;
 import google.registry.model.registry.label.ReservedListSqlDaoTest;
 import google.registry.model.reporting.Spec11ThreatMatchTest;
+import google.registry.model.server.KmsSecretRevisionSqlDaoTest;
+import google.registry.model.server.ServerSecretTest;
+import google.registry.model.smd.SignedMarkRevocationListDaoTest;
 import google.registry.model.tmch.ClaimsListDaoTest;
+import google.registry.model.tmch.TmchCrlTest;
 import google.registry.persistence.transaction.JpaEntityCoverageExtension;
 import google.registry.persistence.transaction.JpaTestRules.JpaIntegrationWithCoverageExtension;
 import google.registry.schema.cursor.CursorDaoTest;
 import google.registry.schema.integration.SqlIntegrationTestSuite.AfterSuiteTest;
 import google.registry.schema.integration.SqlIntegrationTestSuite.BeforeSuiteTest;
 import google.registry.schema.registrar.RegistrarDaoTest;
+import google.registry.schema.replay.SqlReplayCheckpointTest;
 import google.registry.schema.server.LockDaoTest;
 import google.registry.schema.tld.PremiumListDaoTest;
 import google.registry.testing.AppEngineExtension;
@@ -83,14 +89,20 @@ import org.junit.runner.RunWith;
   DomainBaseSqlTest.class,
   DomainHistoryTest.class,
   HostHistoryTest.class,
+  KmsSecretRevisionSqlDaoTest.class,
   LockDaoTest.class,
   PollMessageTest.class,
   PremiumListDaoTest.class,
+  RdeRevisionTest.class,
   RegistrarDaoTest.class,
   RegistryTest.class,
   ReservedListSqlDaoTest.class,
   RegistryLockDaoTest.class,
+  ServerSecretTest.class,
+  SignedMarkRevocationListDaoTest.class,
   Spec11ThreatMatchTest.class,
+  SqlReplayCheckpointTest.class,
+  TmchCrlTest.class,
   // AfterSuiteTest must be the last entry. See class javadoc for details.
   AfterSuiteTest.class
 })

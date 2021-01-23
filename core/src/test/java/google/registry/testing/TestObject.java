@@ -23,18 +23,20 @@ import com.googlecode.objectify.annotation.Parent;
 import google.registry.model.ImmutableObject;
 import google.registry.model.annotations.VirtualEntity;
 import google.registry.model.common.EntityGroupRoot;
+import google.registry.persistence.VKey;
+import google.registry.schema.replay.DatastoreAndSqlEntity;
 import google.registry.schema.replay.EntityTest.EntityForTesting;
+import javax.persistence.Transient;
 
 /** A test model object that can be persisted in any entity group. */
 @Entity
+@javax.persistence.Entity
 @EntityForTesting
-public class TestObject extends ImmutableObject {
+public class TestObject extends ImmutableObject implements DatastoreAndSqlEntity {
 
-  @Parent
-  Key<EntityGroupRoot> parent;
+  @Parent @Transient Key<EntityGroupRoot> parent;
 
-  @Id
-  String id;
+  @Id @javax.persistence.Id String id;
 
   String field;
 
@@ -44,6 +46,10 @@ public class TestObject extends ImmutableObject {
 
   public String getField() {
     return field;
+  }
+
+  public static VKey<TestObject> createVKey(Key<TestObject> key) {
+    return VKey.create(TestObject.class, key.getName(), key);
   }
 
   public static TestObject create(String id) {
@@ -68,8 +74,7 @@ public class TestObject extends ImmutableObject {
   @EntityForTesting
   public static class TestVirtualObject extends ImmutableObject {
 
-    @Id
-    String id;
+    @Id String id;
 
     /**
      * Expose a factory method for testing saves of virtual entities; in real life this would never

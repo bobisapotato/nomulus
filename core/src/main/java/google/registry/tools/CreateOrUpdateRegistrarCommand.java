@@ -30,6 +30,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
+import google.registry.flows.certs.CertificateChecker;
 import google.registry.model.registrar.Registrar;
 import google.registry.model.registrar.RegistrarAddress;
 import google.registry.model.registry.Registry;
@@ -49,6 +50,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import javax.annotation.Nullable;
+import javax.inject.Inject;
 import org.joda.money.CurrencyUnit;
 import org.joda.time.DateTime;
 
@@ -57,9 +59,9 @@ abstract class CreateOrUpdateRegistrarCommand extends MutatingCommand {
 
   static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  @Parameter(
-      description = "Client identifier of the registrar account",
-      required = true)
+  @Inject CertificateChecker certificateChecker;
+
+  @Parameter(description = "Client identifier of the registrar account", required = true)
   List<String> mainParameters;
 
   @Parameter(
@@ -135,15 +137,6 @@ abstract class CreateOrUpdateRegistrarCommand extends MutatingCommand {
       description = "File containing client certificate (X.509 PEM)",
       validateWith = PathParameter.InputFile.class)
   Path clientCertificateFilename;
-
-  @Nullable
-  @Parameter(
-    names = "--cert_hash",
-    description =
-        "Hash of client certificate (SHA256 base64 no padding). Do not use this unless "
-            + "you want to store ONLY the hash and not the full certificate"
-  )
-  String clientCertificateHash;
 
   @Nullable
   @Parameter(
@@ -356,20 +349,22 @@ abstract class CreateOrUpdateRegistrarCommand extends MutatingCommand {
       }
       if (clientCertificateFilename != null) {
         String asciiCert = new String(Files.readAllBytes(clientCertificateFilename), US_ASCII);
+        // An empty certificate file is allowed in order to provide a functionality for removing an
+        // existing certificate without providing a replacement. An uploaded empty certificate file
+        // will prevent the registrar from being able to establish EPP connections.
+        if (!asciiCert.equals("")) {
+          certificateChecker.validateCertificate(asciiCert);
+        }
         builder.setClientCertificate(asciiCert, now);
       }
+
       if (failoverClientCertificateFilename != null) {
         String asciiCert =
             new String(Files.readAllBytes(failoverClientCertificateFilename), US_ASCII);
-        builder.setFailoverClientCertificate(asciiCert, now);
-      }
-      if (!isNullOrEmpty(clientCertificateHash)) {
-        checkArgument(clientCertificateFilename == null,
-            "Can't specify both --cert_hash and --cert_file");
-        if ("null".equals(clientCertificateHash)) {
-          clientCertificateHash = null;
+        if (!asciiCert.equals("")) {
+          certificateChecker.validateCertificate(asciiCert);
         }
-        builder.setClientCertificateHash(clientCertificateHash);
+        builder.setFailoverClientCertificate(asciiCert, now);
       }
       if (ianaId != null) {
         builder.setIanaIdentifier(ianaId.orElse(null));

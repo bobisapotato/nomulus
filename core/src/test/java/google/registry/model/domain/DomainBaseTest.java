@@ -19,17 +19,20 @@ import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth8.assertThat;
 import static google.registry.model.EppResourceUtils.loadByForeignKey;
-import static google.registry.testing.DatastoreHelper.cloneAndSetAutoTimestamps;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.newDomainBase;
-import static google.registry.testing.DatastoreHelper.newHostResource;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.model.ofy.ObjectifyService.ofy;
+import static google.registry.persistence.transaction.TransactionManagerFactory.ofyTm;
+import static google.registry.testing.DatabaseHelper.cloneAndSetAutoTimestamps;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.newDomainBase;
+import static google.registry.testing.DatabaseHelper.newHostResource;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static google.registry.testing.DomainBaseSubject.assertAboutDomains;
 import static google.registry.util.DateTimeUtils.START_OF_TIME;
 import static org.joda.money.CurrencyUnit.USD;
 import static org.joda.time.DateTimeZone.UTC;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.google.appengine.api.datastore.Entity;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedMap;
@@ -38,6 +41,7 @@ import com.google.common.collect.Ordering;
 import com.google.common.collect.Streams;
 import com.googlecode.objectify.Key;
 import google.registry.model.EntityTestCase;
+import google.registry.model.ImmutableObject;
 import google.registry.model.billing.BillingEvent;
 import google.registry.model.billing.BillingEvent.Reason;
 import google.registry.model.contact.ContactResource;
@@ -161,6 +165,15 @@ public class DomainBaseTest extends EntityTestCase {
                             null))
                     .setAutorenewEndTime(Optional.of(fakeClock.nowUtc().plusYears(2)))
                     .build()));
+  }
+
+  @Test
+  void testGracePeriod_nullIdFromOfy() {
+    Entity entity = ofyTm().transact(() -> ofy().save().toEntity(domain));
+    entity.setUnindexedProperty("gracePeriods.gracePeriodId", null);
+    DomainBase domainFromEntity = ofyTm().transact(() -> ofy().load().fromEntity(entity));
+    GracePeriod gracePeriod = domainFromEntity.getGracePeriods().iterator().next();
+    assertThat(gracePeriod.gracePeriodId).isNotNull();
   }
 
   @Test
@@ -412,7 +425,8 @@ public class DomainBaseTest extends EntityTestCase {
                     .plusDays(1)
                     .plus(Registry.get("com").getTransferGracePeriodLength()),
                 "winner",
-                transferBillingEvent.createVKey()));
+                transferBillingEvent.createVKey(),
+                afterTransfer.getGracePeriods().iterator().next().getGracePeriodId()));
     // If we project after the grace period expires all should be the same except the grace period.
     DomainBase afterGracePeriod =
         domain.cloneProjectedAtTime(
@@ -652,7 +666,8 @@ public class DomainBaseTest extends EntityTestCase {
                     .plusYears(2)
                     .plus(Registry.get("com").getAutoRenewGracePeriodLength()),
                 renewedThreeTimes.getCurrentSponsorClientId(),
-                renewedThreeTimes.autorenewBillingEvent));
+                renewedThreeTimes.autorenewBillingEvent,
+                renewedThreeTimes.getGracePeriods().iterator().next().getGracePeriodId()));
   }
 
   @Test
@@ -829,5 +844,57 @@ public class DomainBaseTest extends EntityTestCase {
     // Transferring removes the AUTORENEW grace period and adds a TRANSFER grace period
     assertThat(getOnlyElement(clone.getGracePeriods()).getType())
         .isEqualTo(GracePeriodStatus.TRANSFER);
+  }
+
+  @Test
+  void testHistoryIdRestoration() {
+    // Verify that history ids for billing events are restored during load from datastore.  History
+    // ids are not used by business code or persisted in datastore, but only to reconstruct
+    // objectify keys when loading from SQL.
+    DateTime now = fakeClock.nowUtc();
+    domain =
+        persistResource(
+            domain
+                .asBuilder()
+                .setRegistrationExpirationTime(now.plusYears(1))
+                .setGracePeriods(
+                    ImmutableSet.of(
+                        GracePeriod.createForRecurring(
+                            GracePeriodStatus.AUTO_RENEW,
+                            domain.getRepoId(),
+                            now.plusDays(1),
+                            "NewRegistrar",
+                            recurringBillKey),
+                        GracePeriod.create(
+                            GracePeriodStatus.RENEW,
+                            domain.getRepoId(),
+                            now.plusDays(1),
+                            "NewRegistrar",
+                            oneTimeBillKey)))
+                .build());
+    ImmutableSet<BillEventInfo> historyIds =
+        domain.getGracePeriods().stream()
+            .map(
+                gp -> new BillEventInfo(gp.getRecurringBillingEvent(), gp.getOneTimeBillingEvent()))
+            .collect(toImmutableSet());
+    assertThat(historyIds)
+        .isEqualTo(
+            ImmutableSet.of(
+                new BillEventInfo(null, oneTimeBillKey),
+                new BillEventInfo(recurringBillKey, null)));
+  }
+
+  static class BillEventInfo extends ImmutableObject {
+    VKey<BillingEvent.Recurring> billingEventRecurring;
+    Long billingEventRecurringHistoryId;
+    VKey<BillingEvent.OneTime> billingEventOneTime;
+    Long billingEventOneTimeHistoryId;
+
+    BillEventInfo(
+        VKey<BillingEvent.Recurring> billingEventRecurring,
+        VKey<BillingEvent.OneTime> billingEventOneTime) {
+      this.billingEventRecurring = billingEventRecurring;
+      this.billingEventOneTime = billingEventOneTime;
+    }
   }
 }

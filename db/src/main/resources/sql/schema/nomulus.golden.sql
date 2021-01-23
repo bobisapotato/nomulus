@@ -48,9 +48,10 @@ CREATE TABLE public."AllocationToken" (
     discount_premiums boolean NOT NULL,
     discount_years integer NOT NULL,
     domain_name text,
-    redemption_history_entry text,
+    redemption_domain_repo_id text,
     token_status_transitions public.hstore,
-    token_type text
+    token_type text,
+    redemption_domain_history_id bigint
 );
 
 
@@ -69,7 +70,11 @@ CREATE TABLE public."BillingCancellation" (
     domain_name text NOT NULL,
     billing_time timestamp with time zone,
     billing_event_id bigint,
-    billing_recurrence_id bigint
+    billing_recurrence_id bigint,
+    billing_event_history_id bigint,
+    billing_event_domain_repo_id text,
+    billing_recurrence_history_id bigint,
+    billing_recurrence_domain_repo_id text
 );
 
 
@@ -86,7 +91,7 @@ CREATE TABLE public."BillingEvent" (
     flags text[],
     reason text NOT NULL,
     domain_name text NOT NULL,
-    allocation_token_id text,
+    allocation_token text,
     billing_time timestamp with time zone,
     cancellation_matching_billing_recurrence_id bigint,
     cost_amount numeric(19,2),
@@ -205,8 +210,8 @@ CREATE TABLE public."Contact" (
     search_name text,
     voice_phone_extension text,
     voice_phone_number text,
-    transfer_gaining_poll_message_id bigint,
-    transfer_losing_poll_message_id bigint,
+    transfer_poll_message_id_1 bigint,
+    transfer_poll_message_id_2 bigint,
     transfer_client_txn_id text,
     transfer_server_txn_id text,
     transfer_gaining_registrar_id text,
@@ -214,7 +219,9 @@ CREATE TABLE public."Contact" (
     transfer_pending_expiration_time timestamp with time zone,
     transfer_request_time timestamp with time zone,
     transfer_status text,
-    update_timestamp timestamp with time zone
+    update_timestamp timestamp with time zone,
+    transfer_history_entry_id bigint,
+    transfer_repo_id text
 );
 
 
@@ -228,11 +235,11 @@ CREATE TABLE public."ContactHistory" (
     history_registrar_id text,
     history_modification_time timestamp with time zone NOT NULL,
     history_reason text,
-    history_requested_by_registrar boolean NOT NULL,
+    history_requested_by_registrar boolean,
     history_client_transaction_id text,
     history_server_transaction_id text,
     history_type text NOT NULL,
-    history_xml_bytes bytea NOT NULL,
+    history_xml_bytes bytea,
     auth_info_repo_id text,
     auth_info_value text,
     contact_id text,
@@ -268,8 +275,8 @@ CREATE TABLE public."ContactHistory" (
     addr_local_org text,
     addr_local_type text,
     search_name text,
-    transfer_gaining_poll_message_id bigint,
-    transfer_losing_poll_message_id bigint,
+    transfer_poll_message_id_1 bigint,
+    transfer_poll_message_id_2 bigint,
     transfer_client_txn_id text,
     transfer_server_txn_id text,
     transfer_gaining_registrar_id text,
@@ -287,7 +294,9 @@ CREATE TABLE public."ContactHistory" (
     last_epp_update_time timestamp with time zone,
     statuses text[],
     contact_repo_id text NOT NULL,
-    update_timestamp timestamp with time zone
+    update_timestamp timestamp with time zone,
+    transfer_history_entry_id bigint,
+    transfer_repo_id text
 );
 
 
@@ -346,8 +355,8 @@ CREATE TABLE public."Domain" (
     billing_contact text,
     registrant_contact text,
     tech_contact text,
-    transfer_gaining_poll_message_id bigint,
-    transfer_losing_poll_message_id bigint,
+    transfer_poll_message_id_1 bigint,
+    transfer_poll_message_id_2 bigint,
     transfer_billing_cancellation_id bigint,
     transfer_billing_event_id bigint,
     transfer_billing_recurrence_id bigint,
@@ -372,7 +381,24 @@ CREATE TABLE public."Domain" (
     deletion_poll_message_history_id bigint,
     transfer_billing_recurrence_history_id bigint,
     transfer_autorenew_poll_message_history_id bigint,
-    transfer_billing_event_history_id bigint
+    transfer_billing_event_history_id bigint,
+    transfer_history_entry_id bigint,
+    transfer_repo_id text
+);
+
+
+--
+-- Name: DomainDsDataHistory; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DomainDsDataHistory" (
+    ds_data_history_revision_id bigint NOT NULL,
+    algorithm integer NOT NULL,
+    digest bytea NOT NULL,
+    digest_type integer NOT NULL,
+    domain_history_revision_id bigint NOT NULL,
+    key_tag integer NOT NULL,
+    domain_repo_id text
 );
 
 
@@ -386,11 +412,11 @@ CREATE TABLE public."DomainHistory" (
     history_registrar_id text,
     history_modification_time timestamp with time zone NOT NULL,
     history_reason text,
-    history_requested_by_registrar boolean NOT NULL,
+    history_requested_by_registrar boolean,
     history_client_transaction_id text,
     history_server_transaction_id text,
     history_type text NOT NULL,
-    history_xml_bytes bytea NOT NULL,
+    history_xml_bytes bytea,
     admin_contact text,
     auth_info_repo_id text,
     auth_info_value text,
@@ -418,8 +444,8 @@ CREATE TABLE public."DomainHistory" (
     transfer_renew_period_unit text,
     transfer_renew_period_value integer,
     transfer_registration_expiration_time timestamp with time zone,
-    transfer_gaining_poll_message_id bigint,
-    transfer_losing_poll_message_id bigint,
+    transfer_poll_message_id_1 bigint,
+    transfer_poll_message_id_2 bigint,
     transfer_client_txn_id text,
     transfer_server_txn_id text,
     transfer_gaining_registrar_id text,
@@ -445,7 +471,9 @@ CREATE TABLE public."DomainHistory" (
     deletion_poll_message_history_id bigint,
     transfer_billing_recurrence_history_id bigint,
     transfer_autorenew_poll_message_history_id bigint,
-    transfer_billing_event_history_id bigint
+    transfer_billing_event_history_id bigint,
+    transfer_history_entry_id bigint,
+    transfer_repo_id text
 );
 
 
@@ -509,33 +537,39 @@ ALTER SEQUENCE public."DomainTransactionRecord_id_seq" OWNED BY public."DomainTr
 --
 
 CREATE TABLE public."GracePeriod" (
-    id bigint NOT NULL,
+    grace_period_id bigint NOT NULL,
     billing_event_id bigint,
     billing_recurrence_id bigint,
     registrar_id text NOT NULL,
     domain_repo_id text NOT NULL,
     expiration_time timestamp with time zone NOT NULL,
-    type text NOT NULL
+    type text NOT NULL,
+    billing_event_history_id bigint,
+    billing_recurrence_history_id bigint,
+    billing_event_domain_repo_id text,
+    billing_recurrence_domain_repo_id text
 );
 
 
 --
--- Name: GracePeriod_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: GracePeriodHistory; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE SEQUENCE public."GracePeriod_id_seq"
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: GracePeriod_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public."GracePeriod_id_seq" OWNED BY public."GracePeriod".id;
+CREATE TABLE public."GracePeriodHistory" (
+    grace_period_history_revision_id bigint NOT NULL,
+    billing_event_id bigint,
+    billing_event_history_id bigint,
+    billing_recurrence_id bigint,
+    billing_recurrence_history_id bigint,
+    registrar_id text NOT NULL,
+    domain_repo_id text NOT NULL,
+    expiration_time timestamp with time zone NOT NULL,
+    type text NOT NULL,
+    domain_history_revision_id bigint,
+    grace_period_id bigint NOT NULL,
+    billing_event_domain_repo_id text,
+    billing_recurrence_domain_repo_id text
+);
 
 
 --
@@ -570,11 +604,11 @@ CREATE TABLE public."HostHistory" (
     history_registrar_id text NOT NULL,
     history_modification_time timestamp with time zone NOT NULL,
     history_reason text,
-    history_requested_by_registrar boolean NOT NULL,
+    history_requested_by_registrar boolean,
     history_client_transaction_id text,
     history_server_transaction_id text,
     history_type text NOT NULL,
-    history_xml_bytes bytea NOT NULL,
+    history_xml_bytes bytea,
     host_name text,
     inet_addresses text[],
     last_superordinate_change timestamp with time zone,
@@ -589,6 +623,19 @@ CREATE TABLE public."HostHistory" (
     statuses text[],
     host_repo_id text NOT NULL,
     update_timestamp timestamp with time zone
+);
+
+
+--
+-- Name: KmsSecret; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."KmsSecret" (
+    revision_id bigint NOT NULL,
+    creation_time timestamp with time zone NOT NULL,
+    encrypted_value text NOT NULL,
+    crypto_key_version_name text NOT NULL,
+    secret_name text NOT NULL
 );
 
 
@@ -656,7 +703,7 @@ CREATE TABLE public."PremiumEntry" (
 
 CREATE TABLE public."PremiumList" (
     revision_id bigint NOT NULL,
-    creation_timestamp timestamp with time zone NOT NULL,
+    creation_timestamp timestamp with time zone,
     name text NOT NULL,
     bloom_filter bytea NOT NULL,
     currency text NOT NULL
@@ -680,6 +727,19 @@ CREATE SEQUENCE public."PremiumList_revision_id_seq"
 --
 
 ALTER SEQUENCE public."PremiumList_revision_id_seq" OWNED BY public."PremiumList".revision_id;
+
+
+--
+-- Name: RdeRevision; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."RdeRevision" (
+    tld text NOT NULL,
+    mode text NOT NULL,
+    date date NOT NULL,
+    update_timestamp timestamp with time zone,
+    revision integer NOT NULL
+);
 
 
 --
@@ -876,6 +936,65 @@ ALTER SEQUENCE public."SafeBrowsingThreat_id_seq" OWNED BY public."Spec11ThreatM
 
 
 --
+-- Name: ServerSecret; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."ServerSecret" (
+    secret uuid NOT NULL
+);
+
+
+--
+-- Name: SignedMarkRevocationEntry; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."SignedMarkRevocationEntry" (
+    revision_id bigint NOT NULL,
+    revocation_time timestamp with time zone NOT NULL,
+    smd_id text NOT NULL
+);
+
+
+--
+-- Name: SignedMarkRevocationList; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."SignedMarkRevocationList" (
+    revision_id bigint NOT NULL,
+    creation_time timestamp with time zone
+);
+
+
+--
+-- Name: SignedMarkRevocationList_revision_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."SignedMarkRevocationList_revision_id_seq"
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: SignedMarkRevocationList_revision_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."SignedMarkRevocationList_revision_id_seq" OWNED BY public."SignedMarkRevocationList".revision_id;
+
+
+--
+-- Name: SqlReplayCheckpoint; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."SqlReplayCheckpoint" (
+    revision_id bigint NOT NULL,
+    last_replay_time timestamp with time zone NOT NULL
+);
+
+
+--
 -- Name: Tld; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -908,7 +1027,7 @@ CREATE TABLE public."Tld" (
     registry_lock_or_unlock_cost_currency text,
     renew_billing_cost_transitions public.hstore NOT NULL,
     renew_grace_period_length interval NOT NULL,
-    reserved_list_names text[] NOT NULL,
+    reserved_list_names text[],
     restore_billing_cost_amount numeric(19,2),
     restore_billing_cost_currency text,
     roid_suffix text,
@@ -918,6 +1037,17 @@ CREATE TABLE public."Tld" (
     tld_type text NOT NULL,
     tld_unicode text NOT NULL,
     transfer_grace_period_length interval NOT NULL
+);
+
+
+--
+-- Name: TmchCrl; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."TmchCrl" (
+    certificate_revocations text NOT NULL,
+    update_timestamp timestamp with time zone NOT NULL,
+    url text NOT NULL
 );
 
 
@@ -965,13 +1095,6 @@ ALTER TABLE ONLY public."DomainTransactionRecord" ALTER COLUMN id SET DEFAULT ne
 
 
 --
--- Name: GracePeriod id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."GracePeriod" ALTER COLUMN id SET DEFAULT nextval('public."GracePeriod_id_seq"'::regclass);
-
-
---
 -- Name: PremiumList revision_id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -990,6 +1113,13 @@ ALTER TABLE ONLY public."RegistryLock" ALTER COLUMN revision_id SET DEFAULT next
 --
 
 ALTER TABLE ONLY public."ReservedList" ALTER COLUMN revision_id SET DEFAULT nextval('public."ReservedList_revision_id_seq"'::regclass);
+
+
+--
+-- Name: SignedMarkRevocationList revision_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."SignedMarkRevocationList" ALTER COLUMN revision_id SET DEFAULT nextval('public."SignedMarkRevocationList_revision_id_seq"'::regclass);
 
 
 --
@@ -1083,7 +1213,15 @@ ALTER TABLE ONLY public."Cursor"
 --
 
 ALTER TABLE ONLY public."DelegationSignerData"
-    ADD CONSTRAINT "DelegationSignerData_pkey" PRIMARY KEY (domain_repo_id, key_tag);
+    ADD CONSTRAINT "DelegationSignerData_pkey" PRIMARY KEY (domain_repo_id, key_tag, algorithm, digest_type, digest);
+
+
+--
+-- Name: DomainDsDataHistory DomainDsDataHistory_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DomainDsDataHistory"
+    ADD CONSTRAINT "DomainDsDataHistory_pkey" PRIMARY KEY (ds_data_history_revision_id);
 
 
 --
@@ -1111,11 +1249,19 @@ ALTER TABLE ONLY public."Domain"
 
 
 --
+-- Name: GracePeriodHistory GracePeriodHistory_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."GracePeriodHistory"
+    ADD CONSTRAINT "GracePeriodHistory_pkey" PRIMARY KEY (grace_period_history_revision_id);
+
+
+--
 -- Name: GracePeriod GracePeriod_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."GracePeriod"
-    ADD CONSTRAINT "GracePeriod_pkey" PRIMARY KEY (id);
+    ADD CONSTRAINT "GracePeriod_pkey" PRIMARY KEY (grace_period_id);
 
 
 --
@@ -1132,6 +1278,14 @@ ALTER TABLE ONLY public."HostHistory"
 
 ALTER TABLE ONLY public."Host"
     ADD CONSTRAINT "Host_pkey" PRIMARY KEY (repo_id);
+
+
+--
+-- Name: KmsSecret KmsSecret_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."KmsSecret"
+    ADD CONSTRAINT "KmsSecret_pkey" PRIMARY KEY (revision_id);
 
 
 --
@@ -1164,6 +1318,14 @@ ALTER TABLE ONLY public."PremiumEntry"
 
 ALTER TABLE ONLY public."PremiumList"
     ADD CONSTRAINT "PremiumList_pkey" PRIMARY KEY (revision_id);
+
+
+--
+-- Name: RdeRevision RdeRevision_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."RdeRevision"
+    ADD CONSTRAINT "RdeRevision_pkey" PRIMARY KEY (tld, mode, date);
 
 
 --
@@ -1215,11 +1377,51 @@ ALTER TABLE ONLY public."Spec11ThreatMatch"
 
 
 --
+-- Name: ServerSecret ServerSecret_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ServerSecret"
+    ADD CONSTRAINT "ServerSecret_pkey" PRIMARY KEY (secret);
+
+
+--
+-- Name: SignedMarkRevocationEntry SignedMarkRevocationEntry_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."SignedMarkRevocationEntry"
+    ADD CONSTRAINT "SignedMarkRevocationEntry_pkey" PRIMARY KEY (revision_id, smd_id);
+
+
+--
+-- Name: SignedMarkRevocationList SignedMarkRevocationList_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."SignedMarkRevocationList"
+    ADD CONSTRAINT "SignedMarkRevocationList_pkey" PRIMARY KEY (revision_id);
+
+
+--
+-- Name: SqlReplayCheckpoint SqlReplayCheckpoint_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."SqlReplayCheckpoint"
+    ADD CONSTRAINT "SqlReplayCheckpoint_pkey" PRIMARY KEY (revision_id);
+
+
+--
 -- Name: Tld Tld_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."Tld"
     ADD CONSTRAINT "Tld_pkey" PRIMARY KEY (tld_name);
+
+
+--
+-- Name: TmchCrl TmchCrl_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."TmchCrl"
+    ADD CONSTRAINT "TmchCrl_pkey" PRIMARY KEY (certificate_revocations, update_timestamp, url);
 
 
 --
@@ -1236,6 +1438,22 @@ ALTER TABLE ONLY public."Transaction"
 
 ALTER TABLE ONLY public."RegistryLock"
     ADD CONSTRAINT idx_registry_lock_repo_id_revision_id UNIQUE (repo_id, revision_id);
+
+
+--
+-- Name: DomainHost ukat9erbh52e4lg3jw6ai9wkjj9; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DomainHost"
+    ADD CONSTRAINT ukat9erbh52e4lg3jw6ai9wkjj9 UNIQUE (domain_repo_id, host_repo_id);
+
+
+--
+-- Name: DomainHistoryHost ukt2e7ae3t8gcsxd13wjx2ka7ij; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DomainHistoryHost"
+    ADD CONSTRAINT ukt2e7ae3t8gcsxd13wjx2ka7ij UNIQUE (domain_history_history_revision_id, domain_history_domain_repo_id, host_repo_id);
 
 
 --
@@ -1379,6 +1597,13 @@ CREATE INDEX idxbn8t4wp85fgxjl8q4ctlscx55 ON public."Contact" USING btree (curre
 
 
 --
+-- Name: idxd01j17vrpjxaerxdmn8bwxs7s; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idxd01j17vrpjxaerxdmn8bwxs7s ON public."GracePeriodHistory" USING btree (domain_repo_id);
+
+
+--
 -- Name: idxe7wu46c7wpvfmfnj4565abibp; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1410,7 +1635,7 @@ CREATE INDEX idxhlqqd5uy98cjyos72d81x9j95 ON public."DelegationSignerData" USING
 -- Name: idxhmv411mdqo5ibn4vy7ykxpmlv; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idxhmv411mdqo5ibn4vy7ykxpmlv ON public."BillingEvent" USING btree (allocation_token_id);
+CREATE INDEX idxhmv411mdqo5ibn4vy7ykxpmlv ON public."BillingEvent" USING btree (allocation_token);
 
 
 --
@@ -1453,6 +1678,13 @@ CREATE INDEX idxkjt9yaq92876dstimd93hwckh ON public."Domain" USING btree (curren
 --
 
 CREATE INDEX idxknk8gmj7s47q56cwpa6rmpt5l ON public."HostHistory" USING btree (history_type);
+
+
+--
+-- Name: idxli9nil3s4t4p21i3xluvvilb7; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idxli9nil3s4t4p21i3xluvvilb7 ON public."KmsSecret" USING btree (secret_name);
 
 
 --
@@ -1620,14 +1852,6 @@ ALTER TABLE ONLY public."RegistryLock"
 
 
 --
--- Name: GracePeriod fk2mys4hojm6ev2g9tmy5aq6m7g; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."GracePeriod"
-    ADD CONSTRAINT fk2mys4hojm6ev2g9tmy5aq6m7g FOREIGN KEY (domain_repo_id) REFERENCES public."Domain"(repo_id);
-
-
---
 -- Name: Domain fk2u3srsfbei272093m3b3xwj23; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1644,11 +1868,27 @@ ALTER TABLE ONLY public."HostHistory"
 
 
 --
+-- Name: SignedMarkRevocationEntry fk5ivlhvs3121yx2li5tqh54u4; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."SignedMarkRevocationEntry"
+    ADD CONSTRAINT fk5ivlhvs3121yx2li5tqh54u4 FOREIGN KEY (revision_id) REFERENCES public."SignedMarkRevocationList"(revision_id);
+
+
+--
 -- Name: ClaimsEntry fk6sc6at5hedffc0nhdcab6ivuq; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."ClaimsEntry"
     ADD CONSTRAINT fk6sc6at5hedffc0nhdcab6ivuq FOREIGN KEY (revision_id) REFERENCES public."ClaimsList"(revision_id);
+
+
+--
+-- Name: GracePeriodHistory fk7w3cx8d55q8bln80e716tr7b8; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."GracePeriodHistory"
+    ADD CONSTRAINT fk7w3cx8d55q8bln80e716tr7b8 FOREIGN KEY (domain_repo_id, domain_history_revision_id) REFERENCES public."DomainHistory"(domain_repo_id, history_revision_id);
 
 
 --
@@ -1676,11 +1916,27 @@ ALTER TABLE ONLY public."BillingCancellation"
 
 
 --
+-- Name: BillingCancellation fk_billing_cancellation_domain_history; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BillingCancellation"
+    ADD CONSTRAINT fk_billing_cancellation_domain_history FOREIGN KEY (domain_repo_id, domain_history_revision_id) REFERENCES public."DomainHistory"(domain_repo_id, history_revision_id);
+
+
+--
 -- Name: BillingCancellation fk_billing_cancellation_registrar_id; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."BillingCancellation"
     ADD CONSTRAINT fk_billing_cancellation_registrar_id FOREIGN KEY (registrar_id) REFERENCES public."Registrar"(registrar_id);
+
+
+--
+-- Name: BillingEvent fk_billing_event_allocation_token; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BillingEvent"
+    ADD CONSTRAINT fk_billing_event_allocation_token FOREIGN KEY (allocation_token) REFERENCES public."AllocationToken"(token);
 
 
 --
@@ -1692,11 +1948,27 @@ ALTER TABLE ONLY public."BillingEvent"
 
 
 --
+-- Name: BillingEvent fk_billing_event_domain_history; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BillingEvent"
+    ADD CONSTRAINT fk_billing_event_domain_history FOREIGN KEY (domain_repo_id, domain_history_revision_id) REFERENCES public."DomainHistory"(domain_repo_id, history_revision_id);
+
+
+--
 -- Name: BillingEvent fk_billing_event_registrar_id; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."BillingEvent"
     ADD CONSTRAINT fk_billing_event_registrar_id FOREIGN KEY (registrar_id) REFERENCES public."Registrar"(registrar_id);
+
+
+--
+-- Name: BillingRecurrence fk_billing_recurrence_domain_history; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."BillingRecurrence"
+    ADD CONSTRAINT fk_billing_recurrence_domain_history FOREIGN KEY (domain_repo_id, domain_history_revision_id) REFERENCES public."DomainHistory"(domain_repo_id, history_revision_id);
 
 
 --
@@ -1748,14 +2020,6 @@ ALTER TABLE ONLY public."Domain"
 
 
 --
--- Name: Domain fk_domain_autorenew_poll_message_id; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Domain"
-    ADD CONSTRAINT fk_domain_autorenew_poll_message_id FOREIGN KEY (autorenew_poll_message_id) REFERENCES public."PollMessage"(poll_message_id);
-
-
---
 -- Name: Domain fk_domain_billing_contact; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1769,14 +2033,6 @@ ALTER TABLE ONLY public."Domain"
 
 ALTER TABLE ONLY public."Domain"
     ADD CONSTRAINT fk_domain_billing_recurrence_id FOREIGN KEY (billing_recurrence_id) REFERENCES public."BillingRecurrence"(billing_recurrence_id);
-
-
---
--- Name: Domain fk_domain_deletion_poll_message_id; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Domain"
-    ADD CONSTRAINT fk_domain_deletion_poll_message_id FOREIGN KEY (deletion_poll_message_id) REFERENCES public."PollMessage"(poll_message_id);
 
 
 --
@@ -1812,6 +2068,22 @@ ALTER TABLE ONLY public."Domain"
 
 
 --
+-- Name: Domain fk_domain_tld; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Domain"
+    ADD CONSTRAINT fk_domain_tld FOREIGN KEY (tld) REFERENCES public."Tld"(tld_name);
+
+
+--
+-- Name: DomainTransactionRecord fk_domain_transaction_record_tld; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DomainTransactionRecord"
+    ADD CONSTRAINT fk_domain_transaction_record_tld FOREIGN KEY (tld) REFERENCES public."Tld"(tld_name);
+
+
+--
 -- Name: Domain fk_domain_transfer_billing_cancellation_id; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1824,7 +2096,7 @@ ALTER TABLE ONLY public."Domain"
 --
 
 ALTER TABLE ONLY public."Domain"
-    ADD CONSTRAINT fk_domain_transfer_billing_event_id FOREIGN KEY (transfer_billing_event_id) REFERENCES public."BillingEvent"(billing_event_id);
+    ADD CONSTRAINT fk_domain_transfer_billing_event_id FOREIGN KEY (transfer_billing_event_id) REFERENCES public."BillingEvent"(billing_event_id) DEFERRABLE INITIALLY DEFERRED;
 
 
 --
@@ -1873,6 +2145,46 @@ ALTER TABLE ONLY public."GracePeriod"
 
 ALTER TABLE ONLY public."GracePeriod"
     ADD CONSTRAINT fk_grace_period_billing_recurrence_id FOREIGN KEY (billing_recurrence_id) REFERENCES public."BillingRecurrence"(billing_recurrence_id);
+
+
+--
+-- Name: GracePeriod fk_grace_period_domain_repo_id; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."GracePeriod"
+    ADD CONSTRAINT fk_grace_period_domain_repo_id FOREIGN KEY (domain_repo_id) REFERENCES public."Domain"(repo_id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: GracePeriod fk_grace_period_registrar_id; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."GracePeriod"
+    ADD CONSTRAINT fk_grace_period_registrar_id FOREIGN KEY (registrar_id) REFERENCES public."Registrar"(registrar_id);
+
+
+--
+-- Name: Host fk_host_creation_registrar_id; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Host"
+    ADD CONSTRAINT fk_host_creation_registrar_id FOREIGN KEY (creation_registrar_id) REFERENCES public."Registrar"(registrar_id);
+
+
+--
+-- Name: Host fk_host_current_sponsor_registrar_id; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Host"
+    ADD CONSTRAINT fk_host_current_sponsor_registrar_id FOREIGN KEY (current_sponsor_registrar_id) REFERENCES public."Registrar"(registrar_id);
+
+
+--
+-- Name: Host fk_host_last_epp_update_registrar_id; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Host"
+    ADD CONSTRAINT fk_host_last_epp_update_registrar_id FOREIGN KEY (last_epp_update_registrar_id) REFERENCES public."Registrar"(registrar_id);
 
 
 --
@@ -1964,6 +2276,14 @@ ALTER TABLE ONLY public."PollMessage"
 
 
 --
+-- Name: RegistrarPoc fk_registrar_poc_registrar_id; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."RegistrarPoc"
+    ADD CONSTRAINT fk_registrar_poc_registrar_id FOREIGN KEY (registrar_id) REFERENCES public."Registrar"(registrar_id);
+
+
+--
 -- Name: DomainHistoryHost fka9woh3hu8gx5x0vly6bai327n; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2017,6 +2337,14 @@ ALTER TABLE ONLY public."Contact"
 
 ALTER TABLE ONLY public."PremiumEntry"
     ADD CONSTRAINT fko0gw90lpo1tuee56l0nb6y6g5 FOREIGN KEY (revision_id) REFERENCES public."PremiumList"(revision_id);
+
+
+--
+-- Name: DomainDsDataHistory fko4ilgyyfnvppbpuivus565i0j; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DomainDsDataHistory"
+    ADD CONSTRAINT fko4ilgyyfnvppbpuivus565i0j FOREIGN KEY (domain_repo_id, domain_history_revision_id) REFERENCES public."DomainHistory"(domain_repo_id, history_revision_id);
 
 
 --

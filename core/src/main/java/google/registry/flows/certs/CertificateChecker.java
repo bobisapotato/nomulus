@@ -12,17 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package google.registry.util;
+package google.registry.flows.certs;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static google.registry.util.DateTimeUtils.START_OF_TIME;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedMap;
+import google.registry.config.RegistryConfig.Config;
+import google.registry.util.Clock;
+import google.registry.util.DateTimeUtils;
+import java.io.ByteArrayInputStream;
 import java.security.PublicKey;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.security.interfaces.ECPublicKey;
 import java.security.interfaces.RSAPublicKey;
 import java.util.Date;
+import java.util.stream.Collectors;
+import javax.inject.Inject;
+import org.bouncycastle.jcajce.provider.asymmetric.util.EC5Util;
+import org.bouncycastle.jce.ECNamedCurveTable;
+import org.bouncycastle.jce.spec.ECNamedCurveParameterSpec;
 import org.joda.time.DateTime;
 import org.joda.time.Days;
 
@@ -33,6 +46,7 @@ public class CertificateChecker {
   private final int daysToExpiration;
   private final int minimumRsaKeyLength;
   private final Clock clock;
+  private final ImmutableSet<String> allowedEcdsaCurves;
 
   /**
    * Constructs a CertificateChecker instance with the specified configuration parameters.
@@ -53,24 +67,42 @@ public class CertificateChecker {
    *   );
    * </pre>
    */
-  // TODO(sarahbot): Inject this.
+  @Inject
   public CertificateChecker(
-      ImmutableSortedMap<DateTime, Integer> maxValidityLengthSchedule,
-      int daysToExpiration,
-      int minimumRsaKeyLength,
+      @Config("maxValidityDaysSchedule")
+          ImmutableSortedMap<DateTime, Integer> maxValidityDaysSchedule,
+      @Config("expirationWarningDays") int expirationWarningDays,
+      @Config("minimumRsaKeyLength") int minimumRsaKeyLength,
+      @Config("allowedEcdsaCurves") ImmutableSet<String> allowedEcdsaCurves,
       Clock clock) {
     checkArgument(
-        maxValidityLengthSchedule.containsKey(START_OF_TIME),
+        maxValidityDaysSchedule.containsKey(START_OF_TIME),
         "Max validity length schedule must contain an entry for START_OF_TIME");
-    this.maxValidityLengthSchedule = maxValidityLengthSchedule;
-    this.daysToExpiration = daysToExpiration;
+    this.maxValidityLengthSchedule = maxValidityDaysSchedule;
+    this.daysToExpiration = expirationWarningDays;
     this.minimumRsaKeyLength = minimumRsaKeyLength;
+    this.allowedEcdsaCurves = allowedEcdsaCurves;
     this.clock = clock;
   }
 
   /**
-   * Checks a certificate for violations and returns a list of all the violations the certificate
-   * has.
+   * Checks the given certificate string for violations and throws an exception if any violations
+   * exist.
+   */
+  public void validateCertificate(String certificateString) throws InsecureCertificateException {
+    ImmutableSet<CertificateViolation> violations = checkCertificate(certificateString);
+    if (!violations.isEmpty()) {
+      String displayMessages =
+          violations.stream()
+              .map(violation -> getViolationDisplayMessage(violation))
+              .collect(Collectors.joining("\n"));
+      throw new InsecureCertificateException(violations, displayMessages);
+    }
+  }
+
+  /**
+   * Checks a given certificate for violations and returns a list of all the violations the
+   * certificate has.
    */
   public ImmutableSet<CertificateViolation> checkCertificate(X509Certificate certificate) {
     ImmutableSet.Builder<CertificateViolation> violations = new ImmutableSet.Builder<>();
@@ -98,11 +130,32 @@ public class CertificateChecker {
         violations.add(CertificateViolation.RSA_KEY_LENGTH_TOO_SHORT);
       }
     } else if (key.getAlgorithm().equals("EC")) {
-      // TODO(sarahbot): Add verification of ECDSA curves
+      if (!checkCurveName(key, allowedEcdsaCurves)) {
+        violations.add(CertificateViolation.INVALID_ECDSA_CURVE);
+      }
     } else {
       violations.add(CertificateViolation.ALGORITHM_CONSTRAINED);
     }
     return violations.build();
+  }
+
+  /**
+   * Converts a given string to a certificate and checks it for violations, returning a list of all
+   * the violations the certificate has.
+   */
+  public ImmutableSet<CertificateViolation> checkCertificate(String certificateString) {
+    X509Certificate certificate;
+
+    try {
+      certificate =
+          (X509Certificate)
+              CertificateFactory.getInstance("X509")
+                  .generateCertificate(new ByteArrayInputStream(certificateString.getBytes(UTF_8)));
+    } catch (CertificateException e) {
+      throw new IllegalArgumentException("Unable to read given certificate.");
+    }
+
+    return checkCertificate(certificate);
   }
 
   /**
@@ -127,6 +180,33 @@ public class CertificateChecker {
     return Days.daysBetween(start.withTimeAtStartOfDay(), end.withTimeAtStartOfDay()).getDays();
   }
 
+  /** Checks if the curve used for a public key is in the list of acceptable curves. */
+  private static boolean checkCurveName(PublicKey key, ImmutableSet<String> allowedEcdsaCurves) {
+    org.bouncycastle.jce.spec.ECParameterSpec params;
+    // These 2 different instances of PublicKey need to be handled separately since their OIDs are
+    // encoded differently. More details on this can be found at
+    // https://stackoverflow.com/questions/49895713/how-to-find-the-matching-curve-name-from-an-ecpublickey.
+    if (key instanceof ECPublicKey) {
+      ECPublicKey ecKey = (ECPublicKey) key;
+      params = EC5Util.convertSpec(ecKey.getParams(), false);
+    } else if (key instanceof org.bouncycastle.jce.interfaces.ECPublicKey) {
+      org.bouncycastle.jce.interfaces.ECPublicKey ecKey =
+          (org.bouncycastle.jce.interfaces.ECPublicKey) key;
+      params = ecKey.getParameters();
+    } else {
+      throw new IllegalArgumentException("Unrecognized instance of PublicKey.");
+    }
+    return allowedEcdsaCurves.stream()
+        .anyMatch(
+            curve -> {
+              ECNamedCurveParameterSpec cParams = ECNamedCurveTable.getParameterSpec(curve);
+              return cParams.getN().equals(params.getN())
+                  && cParams.getH().equals(params.getH())
+                  && cParams.getCurve().equals(params.getCurve())
+                  && cParams.getG().equals(params.getG());
+            });
+  }
+
   private String getViolationDisplayMessage(CertificateViolation certificateViolation) {
     // Yes, we'd rather do this as an instance method on the CertificateViolation enum itself, but
     // we can't because we need access to configuration (injected as instance variables) which you
@@ -146,6 +226,9 @@ public class CertificateChecker {
         return String.format(
             "Certificate validity period is too long; it must be less than or equal to %d days.",
             this.maxValidityLengthSchedule.lastEntry().getValue());
+      case INVALID_ECDSA_CURVE:
+        return String.format(
+            "The ECDSA key must use one of these algorithms: %s", allowedEcdsaCurves);
       default:
         throw new IllegalArgumentException(
             String.format(
@@ -162,7 +245,8 @@ public class CertificateChecker {
     NOT_YET_VALID,
     VALIDITY_LENGTH_TOO_LONG,
     RSA_KEY_LENGTH_TOO_SHORT,
-    ALGORITHM_CONSTRAINED;
+    ALGORITHM_CONSTRAINED,
+    INVALID_ECDSA_CURVE;
 
     /**
      * Gets a suitable end-user-facing display message for this particular certificate violation.
@@ -172,6 +256,16 @@ public class CertificateChecker {
      */
     public String getDisplayMessage(CertificateChecker certificateChecker) {
       return certificateChecker.getViolationDisplayMessage(this);
+    }
+  }
+
+  /** Exception to throw when a certificate has security violations. */
+  public static class InsecureCertificateException extends Exception {
+    ImmutableSet<CertificateViolation> violations;
+
+    InsecureCertificateException(ImmutableSet<CertificateViolation> violations, String message) {
+      super(message);
+      this.violations = violations;
     }
   }
 }

@@ -15,8 +15,8 @@
 package google.registry.ui.server.registrar;
 
 import static com.google.common.truth.Truth.assertThat;
-import static google.registry.testing.DatastoreHelper.loadRegistrar;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.loadRegistrar;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static google.registry.testing.TaskQueueHelper.assertNoTasksEnqueued;
 import static google.registry.testing.TaskQueueHelper.assertTasksEnqueued;
 import static google.registry.testing.TestDataHelper.loadFile;
@@ -43,6 +43,7 @@ import google.registry.util.EmailMessage;
 import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import org.joda.time.DateTime;
 import org.json.simple.JSONValue;
 import org.json.simple.parser.ParseException;
 import org.junit.jupiter.api.Test;
@@ -367,20 +368,155 @@ class RegistrarSettingsActionTest extends RegistrarSettingsActionTestCase {
 
   @Test
   void testUpdate_clientCertificate() {
+    clock.setTo(DateTime.parse("2020-11-02T00:00:00Z"));
     doTestUpdate(
         Role.OWNER,
-        Registrar::getClientCertificate,
-        CertificateSamples.SAMPLE_CERT,
+        r -> r.getClientCertificate().orElse(null),
+        CertificateSamples.SAMPLE_CERT3,
         (builder, s) -> builder.setClientCertificate(s, clock.nowUtc()));
   }
 
   @Test
+  void testUpdate_clientCertificateWithViolationsFails() {
+    clock.setTo(DateTime.parse("2020-11-02T00:00:00Z"));
+    Map<String, Object> args = Maps.newHashMap(loadRegistrar(CLIENT_ID).toJsonMap());
+    args.put("clientCertificate", CertificateSamples.SAMPLE_CERT);
+    Map<String, Object> response =
+        action.handleJsonRequest(
+            ImmutableMap.of(
+                "op", "update",
+                "id", CLIENT_ID,
+                "args", args));
+
+    assertThat(response)
+        .containsExactly(
+            "status",
+            "ERROR",
+            "results",
+            ImmutableList.of(),
+            "message",
+            "Certificate validity period is too long; it must be less than or equal to 398"
+                + " days.");
+    assertMetric(CLIENT_ID, "update", "[OWNER]", "ERROR: IllegalArgumentException");
+    assertNoTasksEnqueued("sheet");
+  }
+
+  @Test
+  void testUpdate_clientCertificateWithMultipleViolationsFails() {
+    clock.setTo(DateTime.parse("2055-11-01T00:00:00Z"));
+    Map<String, Object> args = Maps.newHashMap(loadRegistrar(CLIENT_ID).toJsonMap());
+    args.put("clientCertificate", CertificateSamples.SAMPLE_CERT);
+    Map<String, Object> response =
+        action.handleJsonRequest(
+            ImmutableMap.of(
+                "op", "update",
+                "id", CLIENT_ID,
+                "args", args));
+
+    assertThat(response)
+        .containsExactly(
+            "status",
+            "ERROR",
+            "results",
+            ImmutableList.of(),
+            "message",
+            "Certificate is expired.\nCertificate validity period is too long; it must be less"
+                + " than or equal to 398 days.");
+    assertMetric(CLIENT_ID, "update", "[OWNER]", "ERROR: IllegalArgumentException");
+    assertNoTasksEnqueued("sheet");
+  }
+
+  @Test
   void testUpdate_failoverClientCertificate() {
+    clock.setTo(DateTime.parse("2020-11-02T00:00:00Z"));
     doTestUpdate(
         Role.OWNER,
-        Registrar::getFailoverClientCertificate,
-        CertificateSamples.SAMPLE_CERT,
+        r -> r.getFailoverClientCertificate().orElse(null),
+        CertificateSamples.SAMPLE_CERT3,
         (builder, s) -> builder.setFailoverClientCertificate(s, clock.nowUtc()));
+  }
+
+  @Test
+  void testUpdate_failoverClientCertificateWithViolationsAlreadyExistedSucceeds() {
+    // TODO(sarahbot): remove this test after November 1, 2020.
+
+    // The frontend will always send the entire registrar entity back for an update, so the checks
+    // on the certificate should only run if it is a new certificate
+
+    // Set a bad certificate before checks on uploads are enforced
+    clock.setTo(DateTime.parse("2018-07-02T00:00:00Z"));
+    Registrar existingRegistrar = loadRegistrar(CLIENT_ID);
+    existingRegistrar =
+        existingRegistrar
+            .asBuilder()
+            .setFailoverClientCertificate(CertificateSamples.SAMPLE_CERT, clock.nowUtc())
+            .build();
+    persistResource(existingRegistrar);
+
+    // Update with the same certificate after enforcement starts
+    clock.setTo(DateTime.parse("2020-11-02T00:00:00Z"));
+    Map<String, Object> args = Maps.newHashMap(loadRegistrar(CLIENT_ID).toJsonMap());
+    args.put("failoverClientCertificate", CertificateSamples.SAMPLE_CERT);
+    Map<String, Object> response =
+        action.handleJsonRequest(
+            ImmutableMap.of(
+                "op", "update",
+                "id", CLIENT_ID,
+                "args", args));
+
+    assertThat(response).containsEntry("status", "SUCCESS");
+    assertMetric(CLIENT_ID, "update", "[OWNER]", "SUCCESS");
+    assertNoTasksEnqueued("sheet");
+  }
+
+  @Test
+  void testUpdate_failoverClientCertificateWithViolationsFails() {
+    clock.setTo(DateTime.parse("2020-11-02T00:00:00Z"));
+    Map<String, Object> args = Maps.newHashMap(loadRegistrar(CLIENT_ID).toJsonMap());
+    args.put("failoverClientCertificate", CertificateSamples.SAMPLE_CERT);
+    Map<String, Object> response =
+        action.handleJsonRequest(
+            ImmutableMap.of(
+                "op", "update",
+                "id", CLIENT_ID,
+                "args", args));
+
+    assertThat(response)
+        .containsExactly(
+            "status",
+            "ERROR",
+            "results",
+            ImmutableList.of(),
+            "message",
+            "Certificate validity period is too long; it must be less than or equal to 398"
+                + " days.");
+    assertMetric(CLIENT_ID, "update", "[OWNER]", "ERROR: IllegalArgumentException");
+    assertNoTasksEnqueued("sheet");
+  }
+
+  @Test
+  void testUpdate_failoverClientCertificateWithMultipleViolationsFails() {
+    clock.setTo(DateTime.parse("2055-11-01T00:00:00Z"));
+    Map<String, Object> args = Maps.newHashMap(loadRegistrar(CLIENT_ID).toJsonMap());
+    args.put("failoverClientCertificate", CertificateSamples.SAMPLE_CERT);
+    Map<String, Object> response =
+        action.handleJsonRequest(
+            ImmutableMap.of(
+                "op", "update",
+                "id", CLIENT_ID,
+                "args", args));
+
+    assertThat(response)
+        .containsExactly(
+            "status",
+            "ERROR",
+            "results",
+            ImmutableList.of(),
+            "message",
+            "Certificate is expired.\nCertificate validity period is too long; it must be less"
+                + " than or equal to 398 days.");
+    assertMetric(CLIENT_ID, "update", "[OWNER]", "ERROR: IllegalArgumentException");
+    assertNoTasksEnqueued("sheet");
   }
 
   @Test

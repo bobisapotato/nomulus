@@ -17,9 +17,9 @@ package google.registry.model.index;
 import static com.google.common.truth.Truth.assertThat;
 import static google.registry.config.RegistryConfig.getEppResourceIndexBucketCount;
 import static google.registry.model.ofy.ObjectifyService.ofy;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.persistActiveContact;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.persistActiveContact;
+import static google.registry.testing.DatabaseHelper.persistResource;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
@@ -37,7 +37,7 @@ class EppResourceIndexTest extends EntityTestCase {
   @BeforeEach
   void setUp() {
     createTld("tld");
-    // The DatastoreHelper here creates the EppResourceIndex for us.
+    // The DatabaseHelper here creates the EppResourceIndex for us.
     contact = persistActiveContact("abcd1357");
   }
 

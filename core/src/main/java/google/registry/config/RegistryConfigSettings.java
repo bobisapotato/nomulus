@@ -15,6 +15,8 @@
 package google.registry.config;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /** The POJO that YAML config files are deserialized into. */
 public class RegistryConfigSettings {
@@ -38,6 +40,7 @@ public class RegistryConfigSettings {
   public Beam beam;
   public Keyring keyring;
   public RegistryTool registryTool;
+  public SslCertificateValidation sslCertificateValidation;
 
   /** Configuration options that apply to the entire App Engine project. */
   public static class AppEngine {
@@ -123,6 +126,7 @@ public class RegistryConfigSettings {
     public String username;
     public String instanceConnectionName;
     public boolean replicateTransactions;
+    public boolean replayCommitLogs;
   }
 
   /** Configuration for Apache Beam (Cloud Dataflow). */
@@ -217,5 +221,13 @@ public class RegistryConfigSettings {
     public String clientId;
     public String clientSecret;
     public String username;
+  }
+
+  /** Configuration for the certificate checker. */
+  public static class SslCertificateValidation {
+    public Map<String, Integer> maxValidityDaysSchedule;
+    public int expirationWarningDays;
+    public int minimumRsaKeyLength;
+    public Set<String> allowedEcdsaCurves;
   }
 }

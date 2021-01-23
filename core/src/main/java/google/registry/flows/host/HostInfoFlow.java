@@ -21,7 +21,6 @@ import static google.registry.model.EppResourceUtils.isLinked;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
 
 import com.google.common.collect.ImmutableSet;
-import com.googlecode.objectify.Key;
 import google.registry.flows.EppException;
 import google.registry.flows.ExtensionManager;
 import google.registry.flows.Flow;
@@ -68,7 +67,7 @@ public final class HostInfoFlow implements Flow {
     HostResource host = loadAndVerifyExistence(HostResource.class, targetId, now);
     ImmutableSet.Builder<StatusValue> statusValues = new ImmutableSet.Builder<>();
     statusValues.addAll(host.getStatusValues());
-    if (isLinked(Key.create(host), now)) {
+    if (isLinked(host.createVKey(), now)) {
       statusValues.add(StatusValue.LINKED);
     }
     HostInfoData.Builder hostInfoDataBuilder = HostInfoData.newBuilder();
@@ -77,7 +76,7 @@ public final class HostInfoFlow implements Flow {
     // there is no superordinate domain, the host's own values for these fields will be correct.
     if (host.isSubordinate()) {
       DomainBase superordinateDomain =
-          tm().load(host.getSuperordinateDomain()).cloneProjectedAtTime(now);
+          tm().loadByKey(host.getSuperordinateDomain()).cloneProjectedAtTime(now);
       hostInfoDataBuilder
           .setCurrentSponsorClientId(superordinateDomain.getCurrentSponsorClientId())
           .setLastTransferTime(host.computeLastTransferTime(superordinateDomain));

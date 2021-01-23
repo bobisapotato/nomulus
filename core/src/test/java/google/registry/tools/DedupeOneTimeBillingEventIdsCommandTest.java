@@ -16,9 +16,9 @@ package google.registry.tools;
 
 import static com.google.common.truth.Truth.assertThat;
 import static google.registry.model.ofy.ObjectifyService.ofy;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.persistActiveDomain;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.persistActiveDomain;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.joda.money.CurrencyUnit.USD;
 import static org.junit.Assert.assertThrows;
@@ -38,9 +38,9 @@ import org.joda.money.Money;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** Unit tests for {@link ResaveEntitiesWithUniqueIdCommand}. */
-class ResaveEntitiesWithUniqueIdCommandTest
-    extends CommandTestCase<ResaveEntitiesWithUniqueIdCommand> {
+/** Unit tests for {@link DedupeOneTimeBillingEventIdsCommand}. */
+class DedupeOneTimeBillingEventIdsCommandTest
+    extends CommandTestCase<DedupeOneTimeBillingEventIdsCommand> {
 
   DomainBase domain;
   HistoryEntry historyEntry;
@@ -48,7 +48,7 @@ class ResaveEntitiesWithUniqueIdCommandTest
   BillingEvent.OneTime billingEventToResave;
 
   @BeforeEach
-  void setUp() {
+  void beforeEach() {
     createTld("foobar");
     domain = persistActiveDomain("foo.foobar");
     historyEntry = persistHistoryEntry(domain);

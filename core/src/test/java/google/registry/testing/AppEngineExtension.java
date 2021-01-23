@@ -17,7 +17,8 @@ package google.registry.testing;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.io.Files.asCharSink;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static google.registry.testing.DatastoreHelper.persistSimpleResources;
+import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
+import static google.registry.testing.DatabaseHelper.persistSimpleResources;
 import static google.registry.testing.DualDatabaseTestInvocationContextProvider.injectTmForDualDatabaseTest;
 import static google.registry.testing.DualDatabaseTestInvocationContextProvider.restoreTmAfterDualDatabaseTest;
 import static google.registry.util.PreconditionsUtils.checkArgumentNotNull;
@@ -384,6 +385,15 @@ public final class AppEngineExtension implements BeforeEachCallback, AfterEachCa
     if (isWithDatastoreAndCloudSql()) {
       injectTmForDualDatabaseTest(context);
     }
+    if (tm().isOfy()) {
+      if (withDatastore && !withoutCannedData) {
+        loadInitialData();
+      }
+    } else {
+      if (withCloudSql && !withJpaUnitTest && !withoutCannedData) {
+        loadInitialData();
+      }
+    }
   }
 
   /**
@@ -444,10 +454,6 @@ public final class AppEngineExtension implements BeforeEachCallback, AfterEachCa
           .setEnvIsAdmin(userInfo.isAdmin());
     }
 
-    if (clock != null) {
-      helper.setClock(() -> clock.nowUtc().getMillis());
-    }
-
     if (withLocalModules) {
       helper.setEnvInstance("0");
     }
@@ -458,9 +464,6 @@ public final class AppEngineExtension implements BeforeEachCallback, AfterEachCa
       ObjectifyService.initOfy();
       // Reset id allocation in ObjectifyService so that ids are deterministic in tests.
       ObjectifyService.resetNextTestId();
-      if (!withoutCannedData) {
-        loadInitialData();
-      }
       this.ofyTestEntities.forEach(AppEngineExtension::register);
     }
   }
@@ -470,6 +473,24 @@ public final class AppEngineExtension implements BeforeEachCallback, AfterEachCa
   public void afterEach(ExtensionContext context) throws Exception {
     checkArgumentNotNull(context, "The ExtensionContext must not be null");
     try {
+      // If there is a replay extension, we'll want to call its replayToSql() method.
+      //
+      // We have to provide this hook here for ReplayExtension instead of relying on
+      // ReplayExtension's afterEach() method because of ordering and the conflation of environment
+      // initialization and basic entity initialization.
+      //
+      // ReplayExtension's beforeEach() has to be called before this so that the entities that we
+      // initialize (e.g. "TheRegistrar") also get replayed.  But that means that ReplayExtension's
+      // afterEach() won't be called until after ours.  Since we tear down the datastore and SQL
+      // database in our own afterEach(), ReplayExtension's afterEach() would fail if we let the
+      // replay happen there.
+      ReplayExtension replayer =
+          (ReplayExtension)
+              context.getStore(ExtensionContext.Namespace.GLOBAL).get(ReplayExtension.class);
+      if (replayer != null) {
+        replayer.replayToSql();
+      }
+
       if (withCloudSql) {
         if (enableJpaEntityCoverageCheck) {
           jpaIntegrationWithCoverageExtension.afterEach(context);

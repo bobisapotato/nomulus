@@ -22,7 +22,8 @@
         discount_premiums boolean not null,
         discount_years int4 not null,
         domain_name text,
-        redemption_history_entry text,
+        redemption_domain_history_id int8,
+        redemption_domain_repo_id text,
         token_status_transitions hstore,
         token_type text,
         primary key (token)
@@ -39,7 +40,11 @@
         domain_name text not null,
         billing_time timestamptz,
         billing_event_id int8,
+        billing_event_history_id int8,
+        billing_event_domain_repo_id text,
         billing_recurrence_id int8,
+        billing_recurrence_history_id int8,
+        billing_recurrence_domain_repo_id text,
         primary key (billing_cancellation_id)
     );
 
@@ -52,7 +57,7 @@
         flags text[],
         reason text not null,
         domain_name text not null,
-        allocation_token_id text,
+        allocation_token text,
         billing_time timestamptz,
         cancellation_matching_billing_recurrence_id int8,
         cost_amount numeric(19, 2),
@@ -135,8 +140,10 @@
         addr_local_org text,
         addr_local_type text,
         search_name text,
-        transfer_gaining_poll_message_id int8,
-        transfer_losing_poll_message_id int8,
+        transfer_history_entry_id int8,
+        transfer_poll_message_id_1 int8,
+        transfer_poll_message_id_2 int8,
+        transfer_repo_id text,
         transfer_client_txn_id text,
         transfer_server_txn_id text,
         transfer_gaining_registrar_id text,
@@ -156,11 +163,11 @@
         history_registrar_id text,
         history_modification_time timestamptz not null,
         history_reason text,
-        history_requested_by_registrar boolean not null,
+        history_requested_by_registrar boolean,
         history_client_transaction_id text,
         history_server_transaction_id text,
         history_type text not null,
-        history_xml_bytes bytea not null,
+        history_xml_bytes bytea,
         auth_info_repo_id text,
         auth_info_value text,
         contact_id text,
@@ -196,8 +203,10 @@
         addr_local_org text,
         addr_local_type text,
         search_name text,
-        transfer_gaining_poll_message_id int8,
-        transfer_losing_poll_message_id int8,
+        transfer_history_entry_id int8,
+        transfer_poll_message_id_1 int8,
+        transfer_poll_message_id_2 int8,
+        transfer_repo_id text,
         transfer_client_txn_id text,
         transfer_server_txn_id text,
         transfer_gaining_registrar_id text,
@@ -227,12 +236,12 @@
     );
 
     create table "DelegationSignerData" (
-       domain_repo_id text not null,
-        key_tag int4 not null,
-        algorithm int4 not null,
+       algorithm int4 not null,
         digest bytea not null,
         digest_type int4 not null,
-        primary key (domain_repo_id, key_tag)
+        domain_repo_id text not null,
+        key_tag int4 not null,
+        primary key (algorithm, digest, digest_type, domain_repo_id, key_tag)
     );
 
     create table "Domain" (
@@ -279,8 +288,10 @@
         transfer_renew_period_unit text,
         transfer_renew_period_value int4,
         transfer_registration_expiration_time timestamptz,
-        transfer_gaining_poll_message_id int8,
-        transfer_losing_poll_message_id int8,
+        transfer_history_entry_id int8,
+        transfer_poll_message_id_1 int8,
+        transfer_poll_message_id_2 int8,
+        transfer_repo_id text,
         transfer_client_txn_id text,
         transfer_server_txn_id text,
         transfer_gaining_registrar_id text,
@@ -291,6 +302,17 @@
         primary key (repo_id)
     );
 
+    create table "DomainDsDataHistory" (
+       ds_data_history_revision_id int8 not null,
+        algorithm int4 not null,
+        digest bytea not null,
+        digest_type int4 not null,
+        domain_history_revision_id int8 not null,
+        domain_repo_id text,
+        key_tag int4 not null,
+        primary key (ds_data_history_revision_id)
+    );
+
     create table "DomainHistory" (
        domain_repo_id text not null,
         history_revision_id int8 not null,
@@ -298,11 +320,11 @@
         history_registrar_id text,
         history_modification_time timestamptz not null,
         history_reason text,
-        history_requested_by_registrar boolean not null,
+        history_requested_by_registrar boolean,
         history_client_transaction_id text,
         history_server_transaction_id text,
         history_type text not null,
-        history_xml_bytes bytea not null,
+        history_xml_bytes bytea,
         admin_contact text,
         auth_info_repo_id text,
         auth_info_value text,
@@ -337,8 +359,10 @@
         transfer_renew_period_unit text,
         transfer_renew_period_value int4,
         transfer_registration_expiration_time timestamptz,
-        transfer_gaining_poll_message_id int8,
-        transfer_losing_poll_message_id int8,
+        transfer_history_entry_id int8,
+        transfer_poll_message_id_1 int8,
+        transfer_poll_message_id_2 int8,
+        transfer_repo_id text,
         transfer_client_txn_id text,
         transfer_server_txn_id text,
         transfer_gaining_registrar_id text,
@@ -383,14 +407,35 @@
     );
 
     create table "GracePeriod" (
-       id  bigserial not null,
+       grace_period_id int8 not null,
         billing_event_id int8,
+        billing_event_history_id int8,
+        billing_event_domain_repo_id text,
         billing_recurrence_id int8,
+        billing_recurrence_history_id int8,
+        billing_recurrence_domain_repo_id text,
         registrar_id text not null,
         domain_repo_id text not null,
         expiration_time timestamptz not null,
         type text not null,
-        primary key (id)
+        primary key (grace_period_id)
+    );
+
+    create table "GracePeriodHistory" (
+       grace_period_history_revision_id int8 not null,
+        billing_event_id int8,
+        billing_event_history_id int8,
+        billing_event_domain_repo_id text,
+        billing_recurrence_id int8,
+        billing_recurrence_history_id int8,
+        billing_recurrence_domain_repo_id text,
+        registrar_id text not null,
+        domain_repo_id text not null,
+        expiration_time timestamptz not null,
+        type text not null,
+        domain_history_revision_id int8,
+        grace_period_id int8 not null,
+        primary key (grace_period_history_revision_id)
     );
 
     create table "Host" (
@@ -418,11 +463,11 @@
         history_registrar_id text,
         history_modification_time timestamptz not null,
         history_reason text,
-        history_requested_by_registrar boolean not null,
+        history_requested_by_registrar boolean,
         history_client_transaction_id text,
         history_server_transaction_id text,
         history_type text not null,
-        history_xml_bytes bytea not null,
+        history_xml_bytes bytea,
         host_name text,
         inet_addresses text[],
         last_superordinate_change timestamptz,
@@ -437,6 +482,15 @@
         statuses text[],
         update_timestamp timestamptz,
         primary key (host_repo_id, history_revision_id)
+    );
+
+    create table "KmsSecret" (
+       revision_id int8 not null,
+        creation_time timestamptz not null,
+        encrypted_value text not null,
+        crypto_key_version_name text not null,
+        secret_name text not null,
+        primary key (revision_id)
     );
 
     create table "Lock" (
@@ -487,11 +541,20 @@
 
     create table "PremiumList" (
        revision_id  bigserial not null,
-        creation_timestamp timestamptz not null,
+        creation_timestamp timestamptz,
         name text not null,
         bloom_filter bytea not null,
         currency text not null,
         primary key (revision_id)
+    );
+
+    create table "RdeRevision" (
+       date date not null,
+        mode text not null,
+        tld text not null,
+        update_timestamp timestamptz,
+        revision int4 not null,
+        primary key (date, mode, tld)
     );
 
     create table "Registrar" (
@@ -589,9 +652,27 @@
 
     create table "ReservedList" (
        revision_id  bigserial not null,
-        creation_timestamp timestamptz not null,
+        creation_timestamp timestamptz,
         name text not null,
         should_publish boolean not null,
+        primary key (revision_id)
+    );
+
+    create table "ServerSecret" (
+       secret uuid not null,
+        primary key (secret)
+    );
+
+    create table "SignedMarkRevocationEntry" (
+       revision_id int8 not null,
+        revocation_time timestamptz not null,
+        smd_id text not null,
+        primary key (revision_id, smd_id)
+    );
+
+    create table "SignedMarkRevocationList" (
+       revision_id  bigserial not null,
+        creation_time timestamptz,
         primary key (revision_id)
     );
 
@@ -604,6 +685,12 @@
         threat_types text[] not null,
         tld text not null,
         primary key (id)
+    );
+
+    create table "SqlReplayCheckpoint" (
+       revision_id int8 not null,
+        last_replay_time timestamptz,
+        primary key (revision_id)
     );
 
     create table "Tld" (
@@ -635,7 +722,7 @@
         registry_lock_or_unlock_cost_currency text,
         renew_billing_cost_transitions hstore not null,
         renew_grace_period_length interval not null,
-        reserved_list_names text[] not null,
+        reserved_list_names text[],
         restore_billing_cost_amount numeric(19, 2),
         restore_billing_cost_currency text,
         roid_suffix text,
@@ -646,6 +733,13 @@
         tld_unicode text not null,
         transfer_grace_period_length interval not null,
         primary key (tld_name)
+    );
+
+    create table "TmchCrl" (
+       certificate_revocations text not null,
+        update_timestamp timestamptz not null,
+        url text not null,
+        primary key (certificate_revocations, update_timestamp, url)
     );
 
     create table "Transaction" (
@@ -661,7 +755,7 @@ create index IDXqspv57gj2led8ly42fq01t7m7 on "BillingEvent" (registrar_id);
 create index IDX5yfbr88439pxw0v3j86c74fp8 on "BillingEvent" (event_time);
 create index IDX6py6ocrab0ivr76srcd2okpnq on "BillingEvent" (billing_time);
 create index IDXplxf9v56p0wg8ws6qsvd082hk on "BillingEvent" (synthetic_creation_time);
-create index IDXhmv411mdqo5ibn4vy7ykxpmlv on "BillingEvent" (allocation_token_id);
+create index IDXcesda59ssop44kklytpb292hn on "BillingEvent" (allocation_token);
 create index IDXd3gxhkh0jk694pjvh9pyn7wjc on "BillingRecurrence" (registrar_id);
 create index IDX6syykou4nkc7hqa5p8r92cpch on "BillingRecurrence" (event_time);
 create index IDXp3usbtvk0v1m14i5tdp4xnxgc on "BillingRecurrence" (recurrence_end_time);
@@ -686,12 +780,20 @@ create index IDXrh4xmrot9bd63o382ow9ltfig on "DomainHistory" (creation_time);
 create index IDXaro1omfuaxjwmotk3vo00trwm on "DomainHistory" (history_registrar_id);
 create index IDXsu1nam10cjes9keobapn5jvxj on "DomainHistory" (history_type);
 create index IDX6w3qbtgce93cal2orjg1tw7b7 on "DomainHistory" (history_modification_time);
+
+    alter table if exists "DomainHistoryHost" 
+       add constraint UKt2e7ae3t8gcsxd13wjx2ka7ij unique (domain_history_history_revision_id, domain_history_domain_repo_id, host_repo_id);
+
+    alter table if exists "DomainHost" 
+       add constraint UKat9erbh52e4lg3jw6ai9wkjj9 unique (domain_repo_id, host_repo_id);
 create index IDXj1mtx98ndgbtb1bkekahms18w on "GracePeriod" (domain_repo_id);
+create index IDXd01j17vrpjxaerxdmn8bwxs7s on "GracePeriodHistory" (domain_repo_id);
 create index IDXfg2nnjlujxo6cb9fha971bq2n on "HostHistory" (creation_time);
 create index IDX1iy7njgb7wjmj9piml4l2g0qi on "HostHistory" (history_registrar_id);
 create index IDXkkwbwcwvrdkkqothkiye4jiff on "HostHistory" (host_name);
 create index IDXknk8gmj7s47q56cwpa6rmpt5l on "HostHistory" (history_type);
 create index IDX67qwkjtlq5q8dv6egtrtnhqi7 on "HostHistory" (history_modification_time);
+create index IDXli9nil3s4t4p21i3xluvvilb7 on "KmsSecret" (secret_name);
 create index IDXe7wu46c7wpvfmfnj4565abibp on "PollMessage" (registrar_id);
 create index IDXaydgox62uno9qx8cjlj5lauye on "PollMessage" (event_time);
 create index premiumlist_name_idx on "PremiumList" (name);
@@ -718,6 +820,11 @@ create index spec11threatmatch_check_date_idx on "Spec11ThreatMatch" (check_date
        foreign key (domain_repo_id) 
        references "Domain";
 
+    alter table if exists "DomainDsDataHistory" 
+       add constraint FKo4ilgyyfnvppbpuivus565i0j 
+       foreign key (domain_repo_id, domain_history_revision_id) 
+       references "DomainHistory";
+
     alter table if exists "DomainHistoryHost" 
        add constraint FKa9woh3hu8gx5x0vly6bai327n 
        foreign key (domain_history_domain_repo_id, domain_history_history_revision_id) 
@@ -738,6 +845,11 @@ create index spec11threatmatch_check_date_idx on "Spec11ThreatMatch" (check_date
        foreign key (domain_repo_id) 
        references "Domain";
 
+    alter table if exists "GracePeriodHistory" 
+       add constraint FK7w3cx8d55q8bln80e716tr7b8 
+       foreign key (domain_repo_id, domain_history_revision_id) 
+       references "DomainHistory";
+
     alter table if exists "PremiumEntry" 
        add constraint FKo0gw90lpo1tuee56l0nb6y6g5 
        foreign key (revision_id) 
@@ -752,3 +864,8 @@ create index spec11threatmatch_check_date_idx on "Spec11ThreatMatch" (check_date
        add constraint FKgq03rk0bt1hb915dnyvd3vnfc 
        foreign key (revision_id) 
        references "ReservedList";
+
+    alter table if exists "SignedMarkRevocationEntry" 
+       add constraint FK5ivlhvs3121yx2li5tqh54u4 
+       foreign key (revision_id) 
+       references "SignedMarkRevocationList";

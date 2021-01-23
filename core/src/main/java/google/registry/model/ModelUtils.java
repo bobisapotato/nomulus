@@ -87,7 +87,7 @@ public class ModelUtils {
               });
 
   /** Lists all instance fields on an object, including non-public and inherited fields. */
-  static Map<String, Field> getAllFields(Class<?> clazz) {
+  public static Map<String, Field> getAllFields(Class<?> clazz) {
     return ALL_FIELDS_CACHE.getUnchecked(clazz);
   }
 
@@ -194,7 +194,7 @@ public class ModelUtils {
    * returned map in its implementation of {@link ImmutableObject#toString} and {@link
    * ImmutableObject#equals}, which work by comparing and printing these maps.
    */
-  static Map<Field, Object> getFieldValues(Object instance) {
+  public static Map<Field, Object> getFieldValues(Object instance) {
     // Don't make this ImmutableMap because field values can be null.
     Map<Field, Object> values = new LinkedHashMap<>();
     for (Field field : getAllFields(instance.getClass()).values()) {

@@ -18,11 +18,11 @@ import static com.google.common.truth.Truth.assertThat;
 import static google.registry.rdap.RdapTestHelper.assertThat;
 import static google.registry.rdap.RdapTestHelper.parseJsonObject;
 import static google.registry.request.Action.Method.POST;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.persistDomainAsDeleted;
-import static google.registry.testing.DatastoreHelper.persistResource;
-import static google.registry.testing.DatastoreHelper.persistResources;
-import static google.registry.testing.DatastoreHelper.persistSimpleResources;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.persistDomainAsDeleted;
+import static google.registry.testing.DatabaseHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.persistResources;
+import static google.registry.testing.DatabaseHelper.persistSimpleResources;
 import static google.registry.testing.FullFieldsTestEntityHelper.makeAndPersistContactResource;
 import static google.registry.testing.FullFieldsTestEntityHelper.makeAndPersistHostResource;
 import static google.registry.testing.FullFieldsTestEntityHelper.makeDomainBase;
@@ -176,7 +176,7 @@ class RdapDomainSearchActionTest extends RdapSearchActionTestCase<RdapDomainSear
                 .asBuilder()
                 .setSubordinateHosts(ImmutableSet.of("ns1.cat.lol", "ns2.cat.lol"))
                 .setCreationTimeForTest(clock.nowUtc().minusYears(3))
-                .setCreationClientId("foo")
+                .setCreationClientId("TheRegistrar")
                 .build());
     persistResource(
         hostNs1CatLol.asBuilder().setSuperordinateDomain(domainCatLol.createVKey()).build());
@@ -216,7 +216,7 @@ class RdapDomainSearchActionTest extends RdapSearchActionTestCase<RdapDomainSear
                     registrar)
                 .asBuilder()
                 .setCreationTimeForTest(clock.nowUtc().minusYears(3))
-                .setCreationClientId("foo")
+                .setCreationClientId("TheRegistrar")
                 .build());
     // cat.example
     createTld("example");
@@ -255,7 +255,7 @@ class RdapDomainSearchActionTest extends RdapSearchActionTestCase<RdapDomainSear
                     registrar)
                 .asBuilder()
                 .setCreationTimeForTest(clock.nowUtc().minusYears(3))
-                .setCreationClientId("foo")
+                .setCreationClientId("TheRegistrar")
                 .build());
     // cat.みんな
     createTld("xn--q9jyb4c");
@@ -294,7 +294,7 @@ class RdapDomainSearchActionTest extends RdapSearchActionTestCase<RdapDomainSear
                     registrar)
                 .asBuilder()
                 .setCreationTimeForTest(clock.nowUtc().minusYears(3))
-                .setCreationClientId("foo")
+                .setCreationClientId("TheRegistrar")
                 .build());
     // cat.1.test
     createTld("1.test");
@@ -334,7 +334,7 @@ class RdapDomainSearchActionTest extends RdapSearchActionTestCase<RdapDomainSear
                 .asBuilder()
                 .setSubordinateHosts(ImmutableSet.of("ns1.cat.1.test"))
                 .setCreationTimeForTest(clock.nowUtc().minusYears(3))
-                .setCreationClientId("foo")
+                .setCreationClientId("TheRegistrar")
                 .build());
 
     persistResource(makeRegistrar("otherregistrar", "other", Registrar.State.ACTIVE));
@@ -430,7 +430,7 @@ class RdapDomainSearchActionTest extends RdapSearchActionTestCase<RdapDomainSear
               .asBuilder()
               .setNameservers(hostKeys)
               .setCreationTimeForTest(clock.nowUtc().minusYears(3))
-              .setCreationClientId("foo");
+              .setCreationClientId("TheRegistrar");
       if (domainName.equals(mainDomainName)) {
         builder.setSubordinateHosts(subordinateHostnamesBuilder.build());
       }

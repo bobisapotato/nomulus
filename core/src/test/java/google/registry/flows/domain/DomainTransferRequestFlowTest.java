@@ -28,16 +28,16 @@ import static google.registry.model.reporting.DomainTransactionRecord.Transactio
 import static google.registry.model.reporting.HistoryEntry.Type.DOMAIN_CREATE;
 import static google.registry.model.reporting.HistoryEntry.Type.DOMAIN_TRANSFER_REQUEST;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
-import static google.registry.testing.DatastoreHelper.assertBillingEvents;
-import static google.registry.testing.DatastoreHelper.assertBillingEventsEqual;
-import static google.registry.testing.DatastoreHelper.assertPollMessagesEqual;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.getOnlyHistoryEntryOfType;
-import static google.registry.testing.DatastoreHelper.getOnlyPollMessage;
-import static google.registry.testing.DatastoreHelper.getPollMessages;
-import static google.registry.testing.DatastoreHelper.loadRegistrar;
-import static google.registry.testing.DatastoreHelper.persistActiveContact;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.assertBillingEvents;
+import static google.registry.testing.DatabaseHelper.assertBillingEventsEqual;
+import static google.registry.testing.DatabaseHelper.assertPollMessagesEqual;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.getOnlyHistoryEntryOfType;
+import static google.registry.testing.DatabaseHelper.getOnlyPollMessage;
+import static google.registry.testing.DatabaseHelper.getPollMessages;
+import static google.registry.testing.DatabaseHelper.loadRegistrar;
+import static google.registry.testing.DatabaseHelper.persistActiveContact;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static google.registry.testing.DomainBaseSubject.assertAboutDomains;
 import static google.registry.testing.EppExceptionSubject.assertAboutEppExceptions;
 import static google.registry.testing.HistoryEntrySubject.assertAboutHistoryEntries;
@@ -291,13 +291,13 @@ class DomainTransferRequestFlowTest
     // Assert that the domain's TransferData server-approve billing events match the above.
     if (expectTransferBillingEvent) {
       assertBillingEventsEqual(
-          tm().load(domain.getTransferData().getServerApproveBillingEvent()),
+          tm().loadByKey(domain.getTransferData().getServerApproveBillingEvent()),
           optionalTransferBillingEvent.get());
     } else {
       assertThat(domain.getTransferData().getServerApproveBillingEvent()).isNull();
     }
     assertBillingEventsEqual(
-        tm().load(domain.getTransferData().getServerApproveAutorenewEvent()),
+        tm().loadByKey(domain.getTransferData().getServerApproveAutorenewEvent()),
         gainingClientAutorenew);
     // Assert that the full set of server-approve billing events is exactly the extra ones plus
     // the transfer billing event (if present) and the gaining client autorenew.
@@ -318,7 +318,7 @@ class DomainTransferRequestFlowTest
             BillingEvent.class),
         Sets.union(expectedServeApproveBillingEvents, extraBillingEvents));
     // The domain's autorenew billing event should still point to the losing client's event.
-    BillingEvent.Recurring domainAutorenewEvent = tm().load(domain.getAutorenewBillingEvent());
+    BillingEvent.Recurring domainAutorenewEvent = tm().loadByKey(domain.getAutorenewBillingEvent());
     assertThat(domainAutorenewEvent.getClientId()).isEqualTo("TheRegistrar");
     assertThat(domainAutorenewEvent.getRecurrenceEndTime()).isEqualTo(implicitTransferTime);
     // The original grace periods should remain untouched.
@@ -414,7 +414,7 @@ class DomainTransferRequestFlowTest
 
     // Assert that the poll messages show up in the TransferData server approve entities.
     assertPollMessagesEqual(
-        tm().load(domain.getTransferData().getServerApproveAutorenewPollMessage()),
+        tm().loadByKey(domain.getTransferData().getServerApproveAutorenewPollMessage()),
         autorenewPollMessage);
     // Assert that the full set of server-approve poll messages is exactly the server approve
     // OneTime messages to gaining and losing registrars plus the gaining client autorenew.
@@ -446,7 +446,8 @@ class DomainTransferRequestFlowTest
         .hasLastEppUpdateTime(implicitTransferTime)
         .and()
         .hasLastEppUpdateClientId("NewRegistrar");
-    assertThat(tm().load(domainAfterAutomaticTransfer.getAutorenewBillingEvent()).getEventTime())
+    assertThat(
+            tm().loadByKey(domainAfterAutomaticTransfer.getAutorenewBillingEvent()).getEventTime())
         .isEqualTo(expectedExpirationTime);
     // And after the expected grace time, the grace period should be gone.
     DomainBase afterGracePeriod =

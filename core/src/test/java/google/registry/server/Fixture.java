@@ -17,13 +17,13 @@ package google.registry.server;
 import static google.registry.model.domain.DesignatedContact.Type.ADMIN;
 import static google.registry.model.domain.DesignatedContact.Type.BILLING;
 import static google.registry.model.domain.DesignatedContact.Type.TECH;
-import static google.registry.testing.DatastoreHelper.createTlds;
-import static google.registry.testing.DatastoreHelper.loadRegistrar;
-import static google.registry.testing.DatastoreHelper.newContactResource;
-import static google.registry.testing.DatastoreHelper.newDomainBase;
-import static google.registry.testing.DatastoreHelper.persistActiveHost;
-import static google.registry.testing.DatastoreHelper.persistPremiumList;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.createTlds;
+import static google.registry.testing.DatabaseHelper.loadRegistrar;
+import static google.registry.testing.DatabaseHelper.newContactResource;
+import static google.registry.testing.DatabaseHelper.newDomainBase;
+import static google.registry.testing.DatabaseHelper.persistActiveHost;
+import static google.registry.testing.DatabaseHelper.persistPremiumList;
+import static google.registry.testing.DatabaseHelper.persistResource;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -61,7 +61,7 @@ public enum Fixture {
       createTlds("xn--q9jyb4c", "example");
 
       // Used for OT&E TLDs
-      persistPremiumList("default_sandbox_list");
+      persistPremiumList("default_sandbox_list", "sandbox,USD 1000");
 
       try {
         OteStatsTestHelper.setupCompleteOte("otefinished");

@@ -14,9 +14,10 @@
 
 package google.registry.flows.session;
 
-import static google.registry.testing.DatastoreHelper.deleteResource;
-import static google.registry.testing.DatastoreHelper.loadRegistrar;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static com.google.common.truth.Truth.assertThat;
+import static google.registry.testing.DatabaseHelper.deleteResource;
+import static google.registry.testing.DatabaseHelper.loadRegistrar;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static google.registry.testing.EppExceptionSubject.assertAboutEppExceptions;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -32,6 +33,7 @@ import google.registry.flows.session.LoginFlow.PasswordChangesNotSupportedExcept
 import google.registry.flows.session.LoginFlow.RegistrarAccountNotActiveException;
 import google.registry.flows.session.LoginFlow.TooManyFailedLoginsException;
 import google.registry.flows.session.LoginFlow.UnsupportedLanguageException;
+import google.registry.model.eppoutput.EppOutput;
 import google.registry.model.registrar.Registrar;
 import google.registry.model.registrar.Registrar.State;
 import org.junit.jupiter.api.BeforeEach;
@@ -72,6 +74,14 @@ public abstract class LoginFlowTestCase extends FlowTestCase<LoginFlow> {
   @Test
   void testSuccess() throws Exception {
     doSuccessfulTest("login_valid.xml");
+  }
+
+  @Test
+  void testSuccess_setsIsLoginResponse() throws Exception {
+    setEppInput("login_valid.xml");
+    assertTransactionalFlow(false);
+    EppOutput output = runFlow();
+    assertThat(output.getResponse().isLoginResponse()).isTrue();
   }
 
   @Test

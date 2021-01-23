@@ -33,6 +33,8 @@ import google.registry.testing.AppEngineExtension;
 import google.registry.testing.DualDatabaseTest;
 import google.registry.testing.FakeClock;
 import google.registry.testing.InjectExtension;
+import google.registry.testing.TestOfyAndSql;
+import google.registry.testing.TestOfyOnly;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Set;
@@ -40,7 +42,6 @@ import java.util.stream.Stream;
 import javax.persistence.Embeddable;
 import javax.persistence.MappedSuperclass;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 /**
@@ -78,28 +79,28 @@ public class TransactionManagerTest {
     fakeClock.advanceOneMilli();
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void inTransaction_returnsCorrespondingResult() {
     assertThat(tm().inTransaction()).isFalse();
     tm().transact(() -> assertThat(tm().inTransaction()).isTrue());
     assertThat(tm().inTransaction()).isFalse();
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void assertInTransaction_throwsExceptionWhenNotInTransaction() {
     assertThrows(IllegalStateException.class, () -> tm().assertInTransaction());
     tm().transact(() -> tm().assertInTransaction());
     assertThrows(IllegalStateException.class, () -> tm().assertInTransaction());
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void getTransactionTime_throwsExceptionWhenNotInTransaction() {
     assertThrows(IllegalStateException.class, () -> tm().getTransactionTime());
     tm().transact(() -> assertThat(tm().getTransactionTime()).isEqualTo(fakeClock.nowUtc()));
     assertThrows(IllegalStateException.class, () -> tm().getTransactionTime());
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void transact_hasNoEffectWithPartialSuccess() {
     assertEntityNotExist(theEntity);
     assertThrows(
@@ -113,30 +114,30 @@ public class TransactionManagerTest {
     assertEntityNotExist(theEntity);
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void transact_reusesExistingTransaction() {
     assertEntityNotExist(theEntity);
     tm().transact(() -> tm().transact(() -> tm().insert(theEntity)));
     assertEntityExists(theEntity);
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void transactNew_succeeds() {
     assertEntityNotExist(theEntity);
     tm().transactNew(() -> tm().insert(theEntity));
     assertEntityExists(theEntity);
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void transactNewReadOnly_succeeds() {
     assertEntityNotExist(theEntity);
     tm().transact(() -> tm().insert(theEntity));
     assertEntityExists(theEntity);
-    TestEntity persisted = tm().transactNewReadOnly(() -> tm().load(theEntity.key()));
+    TestEntity persisted = tm().transactNewReadOnly(() -> tm().loadByKey(theEntity.key()));
     assertThat(persisted).isEqualTo(theEntity);
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void transactNewReadOnly_throwsWhenWritingEntity() {
     assertEntityNotExist(theEntity);
     assertThrows(
@@ -144,96 +145,96 @@ public class TransactionManagerTest {
     assertEntityNotExist(theEntity);
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void saveNew_succeeds() {
     assertEntityNotExist(theEntity);
     tm().transact(() -> tm().insert(theEntity));
     assertEntityExists(theEntity);
-    assertThat(tm().transact(() -> tm().load(theEntity.key()))).isEqualTo(theEntity);
+    assertThat(tm().transact(() -> tm().loadByKey(theEntity.key()))).isEqualTo(theEntity);
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void saveAllNew_succeeds() {
     assertAllEntitiesNotExist(moreEntities);
     tm().transact(() -> tm().insertAll(moreEntities));
     assertAllEntitiesExist(moreEntities);
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void saveNewOrUpdate_persistsNewEntity() {
     assertEntityNotExist(theEntity);
     tm().transact(() -> tm().put(theEntity));
     assertEntityExists(theEntity);
-    assertThat(tm().transact(() -> tm().load(theEntity.key()))).isEqualTo(theEntity);
+    assertThat(tm().transact(() -> tm().loadByKey(theEntity.key()))).isEqualTo(theEntity);
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void saveNewOrUpdate_updatesExistingEntity() {
     tm().transact(() -> tm().insert(theEntity));
-    TestEntity persisted = tm().transact(() -> tm().load(theEntity.key()));
+    TestEntity persisted = tm().transact(() -> tm().loadByKey(theEntity.key()));
     assertThat(persisted.data).isEqualTo("foo");
     theEntity.data = "bar";
     fakeClock.advanceOneMilli();
     tm().transact(() -> tm().put(theEntity));
-    persisted = tm().transact(() -> tm().load(theEntity.key()));
+    persisted = tm().transact(() -> tm().loadByKey(theEntity.key()));
     assertThat(persisted.data).isEqualTo("bar");
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void saveNewOrUpdateAll_succeeds() {
     assertAllEntitiesNotExist(moreEntities);
     tm().transact(() -> tm().putAll(moreEntities));
     assertAllEntitiesExist(moreEntities);
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void update_succeeds() {
     tm().transact(() -> tm().insert(theEntity));
     TestEntity persisted =
         tm().transact(
                 () ->
-                    tm().load(
+                    tm().loadByKey(
                             VKey.create(TestEntity.class, theEntity.name, Key.create(theEntity))));
     assertThat(persisted.data).isEqualTo("foo");
     theEntity.data = "bar";
     fakeClock.advanceOneMilli();
     tm().transact(() -> tm().update(theEntity));
-    persisted = tm().transact(() -> tm().load(theEntity.key()));
+    persisted = tm().transact(() -> tm().loadByKey(theEntity.key()));
     assertThat(persisted.data).isEqualTo("bar");
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void load_succeeds() {
     assertEntityNotExist(theEntity);
     tm().transact(() -> tm().insert(theEntity));
-    TestEntity persisted = tm().transact(() -> tm().load(theEntity.key()));
+    TestEntity persisted = tm().transact(() -> tm().loadByKey(theEntity.key()));
     assertThat(persisted.name).isEqualTo("theEntity");
     assertThat(persisted.data).isEqualTo("foo");
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void load_throwsOnMissingElement() {
     assertEntityNotExist(theEntity);
     assertThrows(
-        NoSuchElementException.class, () -> tm().transact(() -> tm().load(theEntity.key())));
+        NoSuchElementException.class, () -> tm().transact(() -> tm().loadByKey(theEntity.key())));
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void maybeLoad_succeeds() {
     assertEntityNotExist(theEntity);
     tm().transact(() -> tm().insert(theEntity));
-    TestEntity persisted = tm().transact(() -> tm().maybeLoad(theEntity.key()).get());
+    TestEntity persisted = tm().transact(() -> tm().loadByKeyIfPresent(theEntity.key()).get());
     assertThat(persisted.name).isEqualTo("theEntity");
     assertThat(persisted.data).isEqualTo("foo");
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void maybeLoad_nonExistentObject() {
     assertEntityNotExist(theEntity);
-    assertThat(tm().transact(() -> tm().maybeLoad(theEntity.key())).isPresent()).isFalse();
+    assertThat(tm().transact(() -> tm().loadByKeyIfPresent(theEntity.key())).isPresent()).isFalse();
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void delete_succeeds() {
     tm().transact(() -> tm().insert(theEntity));
     assertEntityExists(theEntity);
@@ -242,14 +243,14 @@ public class TransactionManagerTest {
     assertEntityNotExist(theEntity);
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void delete_doNothingWhenEntityNotExist() {
     assertEntityNotExist(theEntity);
     tm().transact(() -> tm().delete(theEntity.key()));
     assertEntityNotExist(theEntity);
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void delete_succeedsForEntitySet() {
     assertAllEntitiesNotExist(moreEntities);
     tm().transact(() -> tm().insertAll(moreEntities));
@@ -261,7 +262,7 @@ public class TransactionManagerTest {
     assertAllEntitiesNotExist(moreEntities);
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void delete_ignoreNonExistentEntity() {
     assertAllEntitiesNotExist(moreEntities);
     tm().transact(() -> tm().insertAll(moreEntities));
@@ -276,17 +277,26 @@ public class TransactionManagerTest {
     assertAllEntitiesNotExist(moreEntities);
   }
 
-  @TestTemplate
+  @TestOfyAndSql
+  void delete_deletesTheGivenEntity() {
+    tm().transact(() -> tm().insert(theEntity));
+    assertEntityExists(theEntity);
+    fakeClock.advanceOneMilli();
+    tm().transact(() -> tm().delete(theEntity));
+    assertEntityNotExist(theEntity);
+  }
+
+  @TestOfyAndSql
   void load_multi() {
     assertAllEntitiesNotExist(moreEntities);
     tm().transact(() -> tm().insertAll(moreEntities));
     List<VKey<TestEntity>> keys =
         moreEntities.stream().map(TestEntity::key).collect(toImmutableList());
-    assertThat(tm().transact(() -> tm().load(keys)))
+    assertThat(tm().transact(() -> tm().loadByKeys(keys)))
         .isEqualTo(Maps.uniqueIndex(moreEntities, TestEntity::key));
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void load_multiWithDuplicateKeys() {
     assertAllEntitiesNotExist(moreEntities);
     tm().transact(() -> tm().insertAll(moreEntities));
@@ -294,11 +304,11 @@ public class TransactionManagerTest {
         moreEntities.stream().map(TestEntity::key).collect(toImmutableList());
     ImmutableList<VKey<TestEntity>> doubleKeys =
         Stream.concat(keys.stream(), keys.stream()).collect(toImmutableList());
-    assertThat(tm().transact(() -> tm().load(doubleKeys)))
+    assertThat(tm().transact(() -> tm().loadByKeys(doubleKeys)))
         .isEqualTo(Maps.uniqueIndex(moreEntities, TestEntity::key));
   }
 
-  @TestTemplate
+  @TestOfyAndSql
   void load_multiMissingKeys() {
     assertAllEntitiesNotExist(moreEntities);
     tm().transact(() -> tm().insertAll(moreEntities));
@@ -306,8 +316,66 @@ public class TransactionManagerTest {
         Stream.concat(moreEntities.stream(), Stream.of(new TestEntity("dark", "matter")))
             .map(TestEntity::key)
             .collect(toImmutableList());
-    assertThat(tm().transact(() -> tm().load(keys)))
+    assertThat(
+            assertThrows(
+                NoSuchElementException.class, () -> tm().transact(() -> tm().loadByKeys(keys))))
+        .hasMessageThat()
+        .contains("dark");
+  }
+
+  @TestOfyAndSql
+  void loadExisting_missingKeys() {
+    assertAllEntitiesNotExist(moreEntities);
+    tm().transact(() -> tm().insertAll(moreEntities));
+    List<VKey<TestEntity>> keys =
+        Stream.concat(moreEntities.stream(), Stream.of(new TestEntity("dark", "matter")))
+            .map(TestEntity::key)
+            .collect(toImmutableList());
+    assertThat(tm().transact(() -> tm().loadByKeysIfPresent(keys)))
         .isEqualTo(Maps.uniqueIndex(moreEntities, TestEntity::key));
+  }
+
+  @TestOfyAndSql
+  void loadAll_success() {
+    tm().transact(() -> tm().insertAll(moreEntities));
+    assertThat(tm().transact(() -> tm().loadByEntities(moreEntities)))
+        .containsExactlyElementsIn(moreEntities);
+  }
+
+  @TestOfyAndSql
+  void loadAll_missingKeys() {
+    assertAllEntitiesNotExist(moreEntities);
+    tm().transact(() -> tm().insertAll(moreEntities));
+    ImmutableList<TestEntity> nonexistent = ImmutableList.of(new TestEntity("dark", "matter"));
+    assertThat(
+            assertThrows(
+                NoSuchElementException.class,
+                () -> tm().transact(() -> tm().loadByEntities(nonexistent))))
+        .hasMessageThat()
+        .contains("dark");
+  }
+
+  @TestOfyAndSql
+  void loadAllExisting_missingKeys() {
+    tm().transact(() -> tm().insertAll(moreEntities));
+    tm().transact(() -> tm().delete(new TestEntity("entity1", "foo")));
+    assertThat(
+            tm().transact(
+                    () ->
+                        tm().loadByEntitiesIfPresent(moreEntities).stream()
+                            .map(TestEntity::key)
+                            .map(VKey::getSqlKey)
+                            .collect(toImmutableList())))
+        .containsExactly("entity2", "entity3");
+  }
+
+  @TestOfyOnly
+  void loadAllForOfyTm_throwsExceptionInTransaction() {
+    assertAllEntitiesNotExist(moreEntities);
+    tm().transact(() -> tm().insertAll(moreEntities));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> tm().transact(() -> tm().loadAllOf(TestEntity.class)));
   }
 
   private static void assertEntityExists(TestEntity entity) {

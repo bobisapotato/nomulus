@@ -16,9 +16,9 @@ package google.registry.rdap;
 
 import static com.google.common.truth.Truth.assertThat;
 import static google.registry.rdap.RdapTestHelper.assertThat;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.persistResource;
-import static google.registry.testing.DatastoreHelper.persistSimpleResources;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.persistSimpleResources;
 import static google.registry.testing.FullFieldsTestEntityHelper.makeAndPersistContactResource;
 import static google.registry.testing.FullFieldsTestEntityHelper.makeAndPersistHostResource;
 import static google.registry.testing.FullFieldsTestEntityHelper.makeDomainBase;
@@ -95,7 +95,7 @@ class RdapDomainActionTest extends RdapActionBaseTestCase<RdapDomainAction> {
                 registrarLol)
             .asBuilder()
             .setCreationTimeForTest(clock.nowUtc().minusYears(3))
-            .setCreationClientId("foo")
+            .setCreationClientId("TheRegistrar")
             .build());
 
     // deleted domain in lol
@@ -128,7 +128,7 @@ class RdapDomainActionTest extends RdapActionBaseTestCase<RdapDomainAction> {
                     registrarLol)
                 .asBuilder()
                 .setCreationTimeForTest(clock.nowUtc().minusYears(3))
-                .setCreationClientId("foo")
+                .setCreationClientId("TheRegistrar")
                 .setDeletionTime(clock.nowUtc().minusDays(1))
                 .build());
     // cat.みんな
@@ -168,7 +168,7 @@ class RdapDomainActionTest extends RdapActionBaseTestCase<RdapDomainAction> {
                 registrarIdn)
             .asBuilder()
             .setCreationTimeForTest(clock.nowUtc().minusYears(3))
-            .setCreationClientId("foo")
+            .setCreationClientId("TheRegistrar")
             .build());
 
     // 1.tld
@@ -208,7 +208,7 @@ class RdapDomainActionTest extends RdapActionBaseTestCase<RdapDomainAction> {
                 registrar1Tld)
             .asBuilder()
             .setCreationTimeForTest(clock.nowUtc().minusYears(3))
-            .setCreationClientId("foo")
+            .setCreationClientId("TheRegistrar")
             .build());
 
     // history entries

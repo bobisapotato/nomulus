@@ -27,7 +27,6 @@ import static google.registry.flows.host.HostFlowUtils.validateHostName;
 import static google.registry.flows.host.HostFlowUtils.verifySuperordinateDomainNotInPendingDelete;
 import static google.registry.flows.host.HostFlowUtils.verifySuperordinateDomainOwnership;
 import static google.registry.model.index.ForeignKeyIndex.loadAndGetKey;
-import static google.registry.model.ofy.ObjectifyService.ofy;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
 import static google.registry.util.CollectionUtils.isNullOrEmpty;
 
@@ -139,7 +138,7 @@ public final class HostUpdateFlow implements TransactionalFlow {
     String newHostName = firstNonNull(suppliedNewHostName, oldHostName);
     DomainBase oldSuperordinateDomain =
         existingHost.isSubordinate()
-            ? tm().load(existingHost.getSuperordinateDomain()).cloneProjectedAtTime(now)
+            ? tm().loadByKey(existingHost.getSuperordinateDomain()).cloneProjectedAtTime(now)
             : null;
     // Note that lookupSuperordinateDomain calls cloneProjectedAtTime on the domain for us.
     Optional<DomainBase> newSuperordinateDomain =
@@ -191,23 +190,26 @@ public final class HostUpdateFlow implements TransactionalFlow {
             .setPersistedCurrentSponsorClientId(newPersistedClientId)
             .build();
     verifyHasIpsIffIsExternal(command, existingHost, newHost);
-    ImmutableSet.Builder<ImmutableObject> entitiesToSave = new ImmutableSet.Builder<>();
-    entitiesToSave.add(newHost);
+    ImmutableSet.Builder<ImmutableObject> entitiesToInsert = new ImmutableSet.Builder<>();
+    ImmutableSet.Builder<ImmutableObject> entitiesToUpdate = new ImmutableSet.Builder<>();
+    entitiesToUpdate.add(newHost);
     // Keep the {@link ForeignKeyIndex} for this host up to date.
     if (isHostRename) {
       // Update the foreign key for the old host name and save one for the new host name.
-      entitiesToSave.add(
-          ForeignKeyIndex.create(existingHost, now),
-          ForeignKeyIndex.create(newHost, newHost.getDeletionTime()));
+      entitiesToUpdate.add(ForeignKeyIndex.create(existingHost, now));
+      entitiesToUpdate.add(ForeignKeyIndex.create(newHost, newHost.getDeletionTime()));
       updateSuperordinateDomains(existingHost, newHost);
     }
     enqueueTasks(existingHost, newHost);
-    entitiesToSave.add(historyBuilder
-        .setType(HistoryEntry.Type.HOST_UPDATE)
-        .setModificationTime(now)
-        .setParent(Key.create(existingHost))
-        .build());
-    ofy().save().entities(entitiesToSave.build());
+    entitiesToInsert.add(
+        historyBuilder
+            .setType(HistoryEntry.Type.HOST_UPDATE)
+            .setModificationTime(now)
+            .setParent(Key.create(existingHost))
+            .build()
+            .toChildHistoryEntity());
+    tm().updateAll(entitiesToUpdate.build());
+    tm().insertAll(entitiesToInsert.build());
     return responseBuilder.build();
   }
 
@@ -286,7 +288,7 @@ public final class HostUpdateFlow implements TransactionalFlow {
         && Objects.equals(
             existingHost.getSuperordinateDomain(), newHost.getSuperordinateDomain())) {
       tm().put(
-              tm().load(existingHost.getSuperordinateDomain())
+              tm().loadByKey(existingHost.getSuperordinateDomain())
                   .asBuilder()
                   .removeSubordinateHost(existingHost.getHostName())
                   .addSubordinateHost(newHost.getHostName())
@@ -295,14 +297,14 @@ public final class HostUpdateFlow implements TransactionalFlow {
     }
     if (existingHost.isSubordinate()) {
       tm().put(
-              tm().load(existingHost.getSuperordinateDomain())
+              tm().loadByKey(existingHost.getSuperordinateDomain())
                   .asBuilder()
                   .removeSubordinateHost(existingHost.getHostName())
                   .build());
     }
     if (newHost.isSubordinate()) {
       tm().put(
-              tm().load(newHost.getSuperordinateDomain())
+              tm().loadByKey(newHost.getSuperordinateDomain())
                   .asBuilder()
                   .addSubordinateHost(newHost.getHostName())
                   .build());

@@ -19,11 +19,11 @@ import static google.registry.server.Fixture.BASIC;
 import static google.registry.server.Route.route;
 import static google.registry.testing.AppEngineExtension.makeRegistrar2;
 import static google.registry.testing.AppEngineExtension.makeRegistrarContact2;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.loadRegistrar;
-import static google.registry.testing.DatastoreHelper.newDomainBase;
-import static google.registry.testing.DatastoreHelper.persistActiveDomain;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.loadRegistrar;
+import static google.registry.testing.DatabaseHelper.newDomainBase;
+import static google.registry.testing.DatabaseHelper.persistActiveDomain;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static google.registry.testing.SqlHelper.saveRegistryLock;
 import static google.registry.tools.LockOrUnlockDomainCommand.REGISTRY_LOCK_STATUSES;
 import static google.registry.util.DateTimeUtils.START_OF_TIME;
@@ -330,26 +330,6 @@ class RegistrarConsoleScreenshotTest extends WebDriverTestCase {
                   .asBuilder()
                   .setClientCertificate(CertificateSamples.SAMPLE_CERT, START_OF_TIME)
                   .setFailoverClientCertificate(CertificateSamples.SAMPLE_CERT2, START_OF_TIME)
-                  .build());
-          return null;
-        });
-    driver.manage().window().setSize(new Dimension(1050, 2000));
-    driver.get(server.getUrl("/registrar#security-settings"));
-    driver.waitForDisplayedElement(By.tagName("h1"));
-    driver.diffPage("view");
-    driver.waitForDisplayedElement(By.id("reg-app-btn-edit")).click();
-    driver.waitForDisplayedElement(By.tagName("h1"));
-    driver.diffPage("edit");
-  }
-
-  @RetryingTest(3)
-  void settingsSecurityWithHashOnly() throws Throwable {
-    server.runInAppEngineEnvironment(
-        () -> {
-          persistResource(
-              loadRegistrar("TheRegistrar")
-                  .asBuilder()
-                  .setClientCertificateHash(CertificateSamples.SAMPLE_CERT_HASH)
                   .build());
           return null;
         });

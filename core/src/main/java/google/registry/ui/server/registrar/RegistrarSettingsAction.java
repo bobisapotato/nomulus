@@ -38,6 +38,8 @@ import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
 import com.google.common.flogger.FluentLogger;
 import google.registry.config.RegistryEnvironment;
+import google.registry.flows.certs.CertificateChecker;
+import google.registry.flows.certs.CertificateChecker.InsecureCertificateException;
 import google.registry.model.registrar.Registrar;
 import google.registry.model.registrar.RegistrarContact;
 import google.registry.model.registrar.RegistrarContact.Type;
@@ -64,7 +66,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Predicate;
 import javax.inject.Inject;
 import org.joda.time.DateTime;
 
@@ -93,11 +94,13 @@ public class RegistrarSettingsAction implements Runnable, JsonActionRunner.JsonA
   @Inject SendEmailUtils sendEmailUtils;
   @Inject AuthenticatedRegistrarAccessor registrarAccessor;
   @Inject AuthResult authResult;
+  @Inject CertificateChecker certificateChecker;
 
   @Inject RegistrarSettingsAction() {}
 
-  private static final Predicate<RegistrarContact> HAS_PHONE =
-      contact -> contact.getPhoneNumber() != null;
+  private static boolean hasPhone(RegistrarContact contact) {
+    return contact.getPhoneNumber() != null;
+  }
 
   @Override
   public void run() {
@@ -306,17 +309,43 @@ public class RegistrarSettingsAction implements Runnable, JsonActionRunner.JsonA
         RegistrarFormFields.IP_ADDRESS_ALLOW_LIST_FIELD
             .extractUntyped(args)
             .orElse(ImmutableList.of()));
-    RegistrarFormFields.CLIENT_CERTIFICATE_FIELD
-        .extractUntyped(args)
-        .ifPresent(
-            certificate -> builder.setClientCertificate(certificate, tm().getTransactionTime()));
-    RegistrarFormFields.FAILOVER_CLIENT_CERTIFICATE_FIELD
-        .extractUntyped(args)
-        .ifPresent(
-            certificate ->
-                builder.setFailoverClientCertificate(certificate, tm().getTransactionTime()));
+
+    Optional<String> certificateString =
+        RegistrarFormFields.CLIENT_CERTIFICATE_FIELD.extractUntyped(args);
+    if (certificateString.isPresent()) {
+      if (validateCertificate(initialRegistrar.getClientCertificate(), certificateString.get())) {
+        builder.setClientCertificate(certificateString.get(), tm().getTransactionTime());
+      }
+    }
+
+    Optional<String> failoverCertificateString =
+        RegistrarFormFields.FAILOVER_CLIENT_CERTIFICATE_FIELD.extractUntyped(args);
+    if (failoverCertificateString.isPresent()) {
+      if (validateCertificate(
+          initialRegistrar.getFailoverClientCertificate(), failoverCertificateString.get())) {
+        builder.setFailoverClientCertificate(
+            failoverCertificateString.get(), tm().getTransactionTime());
+      }
+    }
 
     return checkNotChangedUnlessAllowed(builder, initialRegistrar, Role.OWNER);
+  }
+
+  /**
+   * Returns true if the registrar should accept the new certificate. Returns false if the
+   * certificate is already the one stored for the registrar.
+   */
+  private boolean validateCertificate(
+      Optional<String> existingCertificate, String certificateString) {
+    if (!existingCertificate.isPresent() || !existingCertificate.get().equals(certificateString)) {
+      try {
+        certificateChecker.validateCertificate(certificateString);
+      } catch (InsecureCertificateException e) {
+        throw new IllegalArgumentException(e.getMessage());
+      }
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -512,8 +541,8 @@ public class RegistrarSettingsAction implements Runnable, JsonActionRunner.JsonA
       Multimap<Type, RegistrarContact> newContactsByType,
       Type... types) {
     for (Type type : types) {
-      if (oldContactsByType.get(type).stream().anyMatch(HAS_PHONE)
-          && newContactsByType.get(type).stream().noneMatch(HAS_PHONE)) {
+      if (oldContactsByType.get(type).stream().anyMatch(RegistrarSettingsAction::hasPhone)
+          && newContactsByType.get(type).stream().noneMatch(RegistrarSettingsAction::hasPhone)) {
         throw new ContactRequirementException(
             String.format(
                 "Please provide a phone number for at least one %s contact",

@@ -18,7 +18,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static google.registry.model.ImmutableObjectSubject.assertAboutImmutableObjects;
 import static google.registry.persistence.transaction.TransactionManagerFactory.jpaTm;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
-import static google.registry.testing.DatastoreHelper.newHostResourceWithRoid;
+import static google.registry.testing.DatabaseHelper.newHostResourceWithRoid;
 import static google.registry.testing.SqlHelper.saveRegistrar;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -47,13 +47,13 @@ public class HostHistoryTest extends EntityTestCase {
     jpaTm().transact(() -> jpaTm().insert(host));
     VKey<HostResource> hostVKey =
         VKey.create(HostResource.class, "host1", Key.create(HostResource.class, "host1"));
-    HostResource hostFromDb = jpaTm().transact(() -> jpaTm().load(hostVKey));
+    HostResource hostFromDb = jpaTm().transact(() -> jpaTm().loadByKey(hostVKey));
     HostHistory hostHistory = createHostHistory(hostFromDb, host.getRepoId());
     jpaTm().transact(() -> jpaTm().insert(hostHistory));
     jpaTm()
         .transact(
             () -> {
-              HostHistory fromDatabase = jpaTm().load(hostHistory.createVKey());
+              HostHistory fromDatabase = jpaTm().loadByKey(hostHistory.createVKey());
               assertHostHistoriesEqual(fromDatabase, hostHistory);
               assertThat(fromDatabase.getParentVKey()).isEqualTo(hostHistory.getParentVKey());
             });
@@ -65,7 +65,7 @@ public class HostHistoryTest extends EntityTestCase {
     HostResource host = newHostResourceWithRoid("ns1.example.com", "host1");
     jpaTm().transact(() -> jpaTm().insert(host));
 
-    HostResource hostFromDb = jpaTm().transact(() -> jpaTm().load(host.createVKey()));
+    HostResource hostFromDb = jpaTm().transact(() -> jpaTm().loadByKey(host.createVKey()));
     HostHistory hostHistory =
         createHostHistory(hostFromDb, host.getRepoId()).asBuilder().setHostBase(null).build();
     jpaTm().transact(() -> jpaTm().insert(hostHistory));
@@ -73,7 +73,7 @@ public class HostHistoryTest extends EntityTestCase {
     jpaTm()
         .transact(
             () -> {
-              HostHistory fromDatabase = jpaTm().load(hostHistory.createVKey());
+              HostHistory fromDatabase = jpaTm().loadByKey(hostHistory.createVKey());
               assertHostHistoriesEqual(fromDatabase, hostHistory);
               assertThat(fromDatabase.getParentVKey()).isEqualTo(hostHistory.getParentVKey());
             });
@@ -87,7 +87,7 @@ public class HostHistoryTest extends EntityTestCase {
     tm().transact(() -> tm().insert(host));
     VKey<HostResource> hostVKey =
         VKey.create(HostResource.class, "host1", Key.create(HostResource.class, "host1"));
-    HostResource hostFromDb = tm().transact(() -> tm().load(hostVKey));
+    HostResource hostFromDb = tm().transact(() -> tm().loadByKey(hostVKey));
     HostHistory hostHistory = createHostHistory(hostFromDb, host.getRepoId());
     fakeClock.advanceOneMilli();
     tm().transact(() -> tm().insert(hostHistory));
@@ -98,8 +98,8 @@ public class HostHistoryTest extends EntityTestCase {
     VKey<HostHistory> hostHistoryVKey = hostHistory.createVKey();
     VKey<HistoryEntry> historyEntryVKey =
         VKey.createOfy(HistoryEntry.class, Key.create(hostHistory.asHistoryEntry()));
-    HostHistory hostHistoryFromDb = tm().transact(() -> tm().load(hostHistoryVKey));
-    HistoryEntry historyEntryFromDb = tm().transact(() -> tm().load(historyEntryVKey));
+    HostHistory hostHistoryFromDb = tm().transact(() -> tm().loadByKey(hostHistoryVKey));
+    HistoryEntry historyEntryFromDb = tm().transact(() -> tm().loadByKey(historyEntryVKey));
 
     assertThat(hostHistoryFromDb).isEqualTo(historyEntryFromDb);
   }

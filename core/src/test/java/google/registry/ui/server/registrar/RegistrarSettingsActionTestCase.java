@@ -21,17 +21,21 @@ import static google.registry.config.RegistryConfig.getGSuiteOutgoingEmailDispla
 import static google.registry.request.auth.AuthenticatedRegistrarAccessor.Role.ADMIN;
 import static google.registry.request.auth.AuthenticatedRegistrarAccessor.Role.OWNER;
 import static google.registry.security.JsonHttpTestUtils.createJsonPayload;
-import static google.registry.testing.DatastoreHelper.createTlds;
-import static google.registry.testing.DatastoreHelper.disallowRegistrarAccess;
-import static google.registry.testing.DatastoreHelper.loadRegistrar;
+import static google.registry.testing.DatabaseHelper.createTlds;
+import static google.registry.testing.DatabaseHelper.disallowRegistrarAccess;
+import static google.registry.testing.DatabaseHelper.loadRegistrar;
+import static google.registry.util.DateTimeUtils.START_OF_TIME;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.appengine.api.users.User;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
+import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.truth.Truth;
+import google.registry.flows.certs.CertificateChecker;
 import google.registry.model.ofy.Ofy;
 import google.registry.model.registrar.RegistrarContact;
 import google.registry.request.JsonActionRunner;
@@ -115,6 +119,13 @@ public abstract class RegistrarSettingsActionTestCase {
         AuthResult.create(
             AuthLevel.USER,
             UserAuthInfo.create(new User("user@email.com", "email.com", "12345"), false));
+    action.certificateChecker =
+        new CertificateChecker(
+            ImmutableSortedMap.of(START_OF_TIME, 825, DateTime.parse("2020-09-01T00:00:00Z"), 398),
+            30,
+            2048,
+            ImmutableSet.of("secp256r1", "secp384r1"),
+            clock);
     inject.setStaticField(Ofy.class, "clock", clock);
     when(req.getMethod()).thenReturn("POST");
     when(rsp.getWriter()).thenReturn(new PrintWriter(writer));

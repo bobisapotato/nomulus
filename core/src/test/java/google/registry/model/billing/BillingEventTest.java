@@ -17,11 +17,12 @@ package google.registry.model.billing;
 import static com.google.common.truth.Truth.assertThat;
 import static google.registry.model.domain.token.AllocationToken.TokenType.UNLIMITED_USE;
 import static google.registry.model.ofy.ObjectifyService.ofy;
-import static google.registry.persistence.transaction.TransactionManagerFactory.jpaTm;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.persistActiveDomain;
-import static google.registry.testing.DatastoreHelper.persistResource;
-import static google.registry.testing.SqlHelper.saveRegistrar;
+import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
+import static google.registry.persistence.transaction.TransactionManagerUtil.ofyTmOrDoNothing;
+import static google.registry.persistence.transaction.TransactionManagerUtil.transactIfJpaTm;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.persistActiveDomain;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static google.registry.util.DateTimeUtils.END_OF_TIME;
 import static org.joda.money.CurrencyUnit.USD;
 import static org.joda.time.DateTimeZone.UTC;
@@ -39,13 +40,17 @@ import google.registry.model.domain.rgp.GracePeriodStatus;
 import google.registry.model.domain.token.AllocationToken;
 import google.registry.model.domain.token.AllocationToken.TokenStatus;
 import google.registry.model.reporting.HistoryEntry;
+import google.registry.persistence.VKey;
+import google.registry.testing.DualDatabaseTest;
+import google.registry.testing.TestOfyAndSql;
+import google.registry.testing.TestOfyOnly;
 import google.registry.util.DateTimeUtils;
 import org.joda.money.Money;
 import org.joda.time.DateTime;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 
 /** Unit tests for {@link BillingEvent}. */
+@DualDatabaseTest
 public class BillingEventTest extends EntityTestCase {
   private final DateTime now = DateTime.now(UTC);
 
@@ -67,16 +72,26 @@ public class BillingEventTest extends EntityTestCase {
   void setUp() {
     createTld("tld");
     domain = persistActiveDomain("foo.tld");
-    historyEntry = persistResource(
-        new HistoryEntry.Builder()
-            .setParent(domain)
-            .setModificationTime(now)
-            .build());
-    historyEntry2 = persistResource(
-        new HistoryEntry.Builder()
-        .setParent(domain)
-        .setModificationTime(now.plusDays(1))
-        .build());
+    historyEntry =
+        persistResource(
+            new HistoryEntry.Builder()
+                .setParent(domain)
+                .setModificationTime(now)
+                .setRequestedByRegistrar(false)
+                .setType(HistoryEntry.Type.DOMAIN_CREATE)
+                .setXmlBytes(new byte[0])
+                .build()
+                .toChildHistoryEntity());
+    historyEntry2 =
+        persistResource(
+            new HistoryEntry.Builder()
+                .setParent(domain)
+                .setModificationTime(now.plusDays(1))
+                .setRequestedByRegistrar(false)
+                .setType(HistoryEntry.Type.DOMAIN_CREATE)
+                .setXmlBytes(new byte[0])
+                .build()
+                .toChildHistoryEntity());
 
     AllocationToken allocationToken =
         persistResource(
@@ -149,74 +164,39 @@ public class BillingEventTest extends EntityTestCase {
                     .setEventTime(now.plusDays(1))
                     .setBillingTime(now.plusYears(1).plusDays(45))
                     .setRecurringEventKey(recurring.createVKey())));
-    modification = persistResource(commonInit(
-        new BillingEvent.Modification.Builder()
-            .setParent(historyEntry2)
-            .setReason(Reason.CREATE)
-            .setCost(Money.of(USD, 1))
-            .setDescription("Something happened")
-            .setEventTime(now.plusDays(1))
-            .setEventKey(Key.create(oneTime))));
+    modification =
+        ofyTmOrDoNothing(
+            () ->
+                persistResource(
+                    commonInit(
+                        new BillingEvent.Modification.Builder()
+                            .setParent(historyEntry2)
+                            .setReason(Reason.CREATE)
+                            .setCost(Money.of(USD, 1))
+                            .setDescription("Something happened")
+                            .setEventTime(now.plusDays(1))
+                            .setEventKey(Key.create(oneTime)))));
   }
 
   private <E extends BillingEvent, B extends BillingEvent.Builder<E, B>> E commonInit(B builder) {
-    return builder
-        .setClientId("a registrar")
-        .setTargetId("foo.tld")
-        .build();
+    return builder.setClientId("TheRegistrar").setTargetId("foo.tld").build();
   }
 
-  private void saveNewBillingEvent(BillingEvent billingEvent) {
-    jpaTm().transact(() -> jpaTm().insert(billingEvent));
-  }
-
-  @Test
-  void testCloudSqlPersistence_OneTime() {
-    saveRegistrar("a registrar");
-    saveNewBillingEvent(oneTime);
-
-    BillingEvent.OneTime persisted = jpaTm().transact(() -> jpaTm().load(oneTime.createVKey()));
-    // TODO(b/168325240): Remove this fix after VKeyConverter generates symmetric key for
-    // AllocationToken.
-    BillingEvent.OneTime fixed =
-        persisted.asBuilder().setAllocationToken(oneTime.getAllocationToken().get()).build();
-    assertThat(fixed).isEqualTo(oneTime);
-  }
-
-  @Test
-  void testCloudSqlPersistence_Cancellation() {
-    saveRegistrar("a registrar");
-    saveNewBillingEvent(oneTime);
-    saveNewBillingEvent(cancellationOneTime);
-
-    BillingEvent.Cancellation persisted =
-        jpaTm().transact(() -> jpaTm().load(cancellationOneTime.createVKey()));
-    // TODO(b/168537779): Remove this fix after VKey<OneTime> can be reconstructed correctly.
-    BillingEvent.Cancellation fixed =
-        persisted.asBuilder().setOneTimeEventKey(oneTime.createVKey()).build();
-    assertThat(fixed).isEqualTo(cancellationOneTime);
-  }
-
-  @Test
-  void testCloudSqlPersistence_Recurring() {
-    saveRegistrar("a registrar");
-    saveNewBillingEvent(recurring);
-
-    BillingEvent.Recurring persisted = jpaTm().transact(() -> jpaTm().load(recurring.createVKey()));
-    assertThat(persisted).isEqualTo(recurring);
-  }
-
-  @Test
+  @TestOfyAndSql
   void testPersistence() {
-    assertThat(ofy().load().entity(oneTime).now()).isEqualTo(oneTime);
-    assertThat(ofy().load().entity(oneTimeSynthetic).now()).isEqualTo(oneTimeSynthetic);
-    assertThat(ofy().load().entity(recurring).now()).isEqualTo(recurring);
-    assertThat(ofy().load().entity(cancellationOneTime).now()).isEqualTo(cancellationOneTime);
-    assertThat(ofy().load().entity(cancellationRecurring).now()).isEqualTo(cancellationRecurring);
-    assertThat(ofy().load().entity(modification).now()).isEqualTo(modification);
+    assertThat(transactIfJpaTm(() -> tm().loadByEntity(oneTime))).isEqualTo(oneTime);
+    assertThat(transactIfJpaTm(() -> tm().loadByEntity(oneTimeSynthetic)))
+        .isEqualTo(oneTimeSynthetic);
+    assertThat(transactIfJpaTm(() -> tm().loadByEntity(recurring))).isEqualTo(recurring);
+    assertThat(transactIfJpaTm(() -> tm().loadByEntity(cancellationOneTime)))
+        .isEqualTo(cancellationOneTime);
+    assertThat(transactIfJpaTm(() -> tm().loadByEntity(cancellationRecurring)))
+        .isEqualTo(cancellationRecurring);
+
+    ofyTmOrDoNothing(() -> assertThat(tm().loadByEntity(modification)).isEqualTo(modification));
   }
 
-  @Test
+  @TestOfyOnly
   void testParenting() {
     // Note that these are all tested separately because BillingEvent is an abstract base class that
     // lacks the @Entity annotation, and thus we cannot call .type(BillingEvent.class)
@@ -238,19 +218,15 @@ public class BillingEventTest extends EntityTestCase {
         .containsExactly(modification);
   }
 
-  @Test
+  @TestOfyAndSql
   void testCancellationMatching() {
-    Key<?> recurringKey =
-        ofy()
-            .load()
-            .entity(oneTimeSynthetic)
-            .now()
-            .getCancellationMatchingBillingEvent()
-            .getOfyKey();
-    assertThat(ofy().load().key(recurringKey).now()).isEqualTo(recurring);
+    VKey<?> recurringKey =
+        transactIfJpaTm(
+            () -> tm().loadByEntity(oneTimeSynthetic).getCancellationMatchingBillingEvent());
+    assertThat(transactIfJpaTm(() -> tm().loadByKey(recurringKey))).isEqualTo(recurring);
   }
 
-  @Test
+  @TestOfyOnly
   void testIndexing() throws Exception {
     verifyIndexing(
         oneTime,
@@ -272,7 +248,7 @@ public class BillingEventTest extends EntityTestCase {
     verifyIndexing(modification, "clientId", "eventTime");
   }
 
-  @Test
+  @TestOfyAndSql
   void testFailure_syntheticFlagWithoutCreationTime() {
     IllegalStateException thrown =
         assertThrows(
@@ -288,7 +264,7 @@ public class BillingEventTest extends EntityTestCase {
         .contains("Synthetic creation time must be set if and only if the SYNTHETIC flag is set.");
   }
 
-  @Test
+  @TestOfyAndSql
   void testFailure_syntheticCreationTimeWithoutFlag() {
     IllegalStateException thrown =
         assertThrows(
@@ -299,7 +275,7 @@ public class BillingEventTest extends EntityTestCase {
         .contains("Synthetic creation time must be set if and only if the SYNTHETIC flag is set");
   }
 
-  @Test
+  @TestOfyAndSql
   void testFailure_syntheticFlagWithoutCancellationMatchingKey() {
     IllegalStateException thrown =
         assertThrows(
@@ -317,7 +293,7 @@ public class BillingEventTest extends EntityTestCase {
                 + "if and only if the SYNTHETIC flag is set");
   }
 
-  @Test
+  @TestOfyAndSql
   void testFailure_cancellationMatchingKeyWithoutFlag() {
     IllegalStateException thrown =
         assertThrows(
@@ -334,7 +310,7 @@ public class BillingEventTest extends EntityTestCase {
                 + "if and only if the SYNTHETIC flag is set");
   }
 
-  @Test
+  @TestOfyAndSql
   void testSuccess_cancellation_forGracePeriod_withOneTime() {
     BillingEvent.Cancellation newCancellation =
         BillingEvent.Cancellation.forGracePeriod(
@@ -342,11 +318,11 @@ public class BillingEventTest extends EntityTestCase {
             historyEntry2,
             "foo.tld");
     // Set ID to be the same to ignore for the purposes of comparison.
-    newCancellation = newCancellation.asBuilder().setId(cancellationOneTime.getId()).build();
-    assertThat(newCancellation).isEqualTo(cancellationOneTime);
+    assertThat(newCancellation.asBuilder().setId(cancellationOneTime.getId()).build())
+        .isEqualTo(cancellationOneTime);
   }
 
-  @Test
+  @TestOfyAndSql
   void testSuccess_cancellation_forGracePeriod_withRecurring() {
     BillingEvent.Cancellation newCancellation =
         BillingEvent.Cancellation.forGracePeriod(
@@ -354,16 +330,16 @@ public class BillingEventTest extends EntityTestCase {
                 GracePeriodStatus.AUTO_RENEW,
                 domain.getRepoId(),
                 now.plusYears(1).plusDays(45),
-                "a registrar",
+                "TheRegistrar",
                 recurring.createVKey()),
             historyEntry2,
             "foo.tld");
     // Set ID to be the same to ignore for the purposes of comparison.
-    newCancellation = newCancellation.asBuilder().setId(cancellationRecurring.getId()).build();
-    assertThat(newCancellation).isEqualTo(cancellationRecurring);
+    assertThat(newCancellation.asBuilder().setId(cancellationRecurring.getId()).build())
+        .isEqualTo(cancellationRecurring);
   }
 
-  @Test
+  @TestOfyAndSql
   void testFailure_cancellation_forGracePeriodWithoutBillingEvent() {
     IllegalArgumentException thrown =
         assertThrows(
@@ -380,7 +356,7 @@ public class BillingEventTest extends EntityTestCase {
     assertThat(thrown).hasMessageThat().contains("grace period without billing event");
   }
 
-  @Test
+  @TestOfyAndSql
   void testFailure_cancellationWithNoBillingEvent() {
     IllegalStateException thrown =
         assertThrows(
@@ -394,7 +370,7 @@ public class BillingEventTest extends EntityTestCase {
     assertThat(thrown).hasMessageThat().contains("exactly one billing event");
   }
 
-  @Test
+  @TestOfyAndSql
   void testFailure_cancellationWithBothBillingEvents() {
     IllegalStateException thrown =
         assertThrows(
@@ -408,7 +384,7 @@ public class BillingEventTest extends EntityTestCase {
     assertThat(thrown).hasMessageThat().contains("exactly one billing event");
   }
 
-  @Test
+  @TestOfyAndSql
   void testDeadCodeThatDeletedScrapCommandsReference() {
     assertThat(recurring.getParentKey()).isEqualTo(Key.create(historyEntry));
     new BillingEvent.OneTime.Builder().setParent(Key.create(historyEntry));

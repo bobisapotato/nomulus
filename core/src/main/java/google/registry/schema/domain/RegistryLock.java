@@ -19,7 +19,6 @@ import static google.registry.util.DateTimeUtils.isBeforeOrAt;
 import static google.registry.util.DateTimeUtils.toZonedDateTime;
 import static google.registry.util.PreconditionsUtils.checkArgumentNotNull;
 
-import com.google.common.collect.ImmutableList;
 import google.registry.model.Buildable;
 import google.registry.model.CreateAutoTimestamp;
 import google.registry.model.ImmutableObject;
@@ -132,6 +131,7 @@ public final class RegistryLock extends ImmutableObject implements Buildable, Sq
   private boolean isSuperuser;
 
   /** The lock that undoes this lock, if this lock has been unlocked and the domain locked again. */
+  // TODO(b/176498743): Lazy loading on scalar field not supported by default. See bug for details.
   @OneToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "relockRevisionId", referencedColumnName = "revisionId")
   private RegistryLock relock;
@@ -234,8 +234,8 @@ public final class RegistryLock extends ImmutableObject implements Buildable, Sq
   }
 
   @Override
-  public ImmutableList<DatastoreEntity> toDatastoreEntities() {
-    return ImmutableList.of(); // not stored in Datastore
+  public Optional<DatastoreEntity> toDatastoreEntity() {
+    return Optional.empty(); // Not persisted in Datastore
   }
 
   /** Builder for {@link google.registry.schema.domain.RegistryLock}. */

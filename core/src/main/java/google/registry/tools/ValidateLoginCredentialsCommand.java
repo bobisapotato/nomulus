@@ -25,12 +25,14 @@ import static java.nio.charset.StandardCharsets.US_ASCII;
 import com.beust.jcommander.Parameter;
 import com.beust.jcommander.Parameters;
 import google.registry.flows.TlsCredentials;
+import google.registry.flows.certs.CertificateChecker;
 import google.registry.model.registrar.Registrar;
 import google.registry.tools.params.PathParameter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 import javax.annotation.Nullable;
+import javax.inject.Inject;
 
 /** A command to test registrar login credentials. */
 @Parameters(separators = " =", commandDescription = "Test registrar login credentials")
@@ -55,30 +57,40 @@ final class ValidateLoginCredentialsCommand implements CommandWithRemoteApi {
       validateWith = PathParameter.InputFile.class)
   private Path clientCertificatePath;
 
+  // TODO(sarahbot@): Remove this after hash fallback is removed
   @Nullable
   @Parameter(
       names = {"-h", "--cert_hash"},
       description = "Hash of the client certificate.")
   private String clientCertificateHash;
 
+  @Nullable
   @Parameter(
       names = {"-i", "--ip_address"},
       description = "Client ip address to pretend to use")
   private String clientIpAddress = "10.0.0.1";
+
+  @Inject CertificateChecker certificateChecker;
 
   @Override
   public void run() throws Exception {
     checkArgument(
         clientCertificatePath == null || isNullOrEmpty(clientCertificateHash),
         "Can't specify both --cert_hash and --cert_file");
+    String clientCertificate = "";
     if (clientCertificatePath != null) {
-      clientCertificateHash = getCertificateHash(
-          loadCertificate(new String(Files.readAllBytes(clientCertificatePath), US_ASCII)));
+      clientCertificate = new String(Files.readAllBytes(clientCertificatePath), US_ASCII);
+      clientCertificateHash = getCertificateHash(loadCertificate(clientCertificate));
     }
     Registrar registrar =
         checkArgumentPresent(
             Registrar.loadByClientId(clientId), "Registrar %s not found", clientId);
-    new TlsCredentials(true, clientCertificateHash, Optional.of(clientIpAddress))
+    new TlsCredentials(
+            true,
+            Optional.ofNullable(clientCertificateHash),
+            Optional.ofNullable(clientCertificate),
+            Optional.ofNullable(clientIpAddress),
+            certificateChecker)
         .validate(registrar, password);
     checkState(
         registrar.isLive(), "Registrar %s has non-live state: %s", clientId, registrar.getState());

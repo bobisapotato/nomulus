@@ -15,8 +15,10 @@
 package google.registry.model.smd;
 
 import static com.google.common.truth.Truth.assertThat;
+import static google.registry.model.ImmutableObjectSubject.assertAboutImmutableObjects;
 import static google.registry.model.ofy.ObjectifyService.ofy;
 import static google.registry.model.smd.SignedMarkRevocationList.SHARD_SIZE;
+import static google.registry.persistence.transaction.TransactionManagerFactory.jpaTm;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
 import static google.registry.util.DateTimeUtils.START_OF_TIME;
 import static org.joda.time.Duration.standardDays;
@@ -72,10 +74,11 @@ public class SignedMarkRevocationListTest {
       revokes.put(Integer.toString(i), clock.nowUtc());
     }
     // Save it with sharding, and make sure that reloading it works.
-    SignedMarkRevocationList unsharded = SignedMarkRevocationList
-        .create(clock.nowUtc(), revokes.build())
-        .save();
-    assertThat(SignedMarkRevocationList.get()).isEqualTo(unsharded);
+    SignedMarkRevocationList unsharded =
+        SignedMarkRevocationList.create(clock.nowUtc(), revokes.build()).save();
+    assertAboutImmutableObjects()
+        .that(SignedMarkRevocationList.get())
+        .isEqualExceptFields(unsharded, "revisionId");
     assertThat(ofy().load().type(SignedMarkRevocationList.class).count()).isEqualTo(2);
   }
 
@@ -91,7 +94,9 @@ public class SignedMarkRevocationListTest {
     SignedMarkRevocationList unsharded = SignedMarkRevocationList
         .create(clock.nowUtc(), revokes.build())
         .save();
-    assertThat(SignedMarkRevocationList.get()).isEqualTo(unsharded);
+    assertAboutImmutableObjects()
+        .that(SignedMarkRevocationList.get())
+        .isEqualExceptFields(unsharded, "revisionId");
     assertThat(ofy().load().type(SignedMarkRevocationList.class).count()).isEqualTo(4);
   }
 
@@ -132,6 +137,33 @@ public class SignedMarkRevocationListTest {
     clock.advanceBy(standardDays(1));
     assertThat(SignedMarkRevocationList.get().getCreationTime())
         .isEqualTo(DateTime.parse("2000-01-01T00:00:00Z"));
+  }
+
+  @Test
+  void test_getCreationTime_missingInCloudSQL() {
+    clock.setTo(DateTime.parse("2000-01-01T00:00:00Z"));
+    createSaveGetHelper(1);
+    jpaTm().transact(() -> jpaTm().delete(SignedMarkRevocationListDao.getLatestRevision().get()));
+    RuntimeException thrown =
+        assertThrows(RuntimeException.class, () -> SignedMarkRevocationList.get());
+    assertThat(thrown)
+        .hasMessageThat()
+        .isEqualTo("Signed mark revocation list in Cloud SQL is empty.");
+  }
+
+  @Test
+  void test_getCreationTime_unequalListsInDatabases() {
+    clock.setTo(DateTime.parse("2000-01-01T00:00:00Z"));
+    createSaveGetHelper(1);
+    ImmutableMap.Builder<String, DateTime> revokes = new ImmutableMap.Builder<>();
+    for (int i = 0; i < 3; i++) {
+      revokes.put(Integer.toString(i), clock.nowUtc());
+    }
+    SignedMarkRevocationListDao.trySave(
+        SignedMarkRevocationList.create(clock.nowUtc(), revokes.build()));
+    RuntimeException thrown =
+        assertThrows(RuntimeException.class, () -> SignedMarkRevocationList.get());
+    assertThat(thrown).hasMessageThat().contains("Unequal SM revocation lists detected:");
   }
 
   @Test

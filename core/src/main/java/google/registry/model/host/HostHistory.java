@@ -14,7 +14,6 @@
 
 package google.registry.model.host;
 
-import com.google.common.collect.ImmutableList;
 import com.googlecode.objectify.Key;
 import com.googlecode.objectify.annotation.EntitySubclass;
 import google.registry.model.ImmutableObject;
@@ -61,7 +60,9 @@ public class HostHistory extends HistoryEntry implements SqlEntity {
   @Id
   @Access(AccessType.PROPERTY)
   public String getHostRepoId() {
-    return parent.getName();
+    // We need to handle null case here because Hibernate sometimes accesses this method before
+    // parent gets initialized
+    return parent == null ? null : parent.getName();
   }
 
   /** This method is private because it is only used by Hibernate. */
@@ -94,9 +95,9 @@ public class HostHistory extends HistoryEntry implements SqlEntity {
   }
 
   /** Creates a {@link VKey} instance for this entity. */
+  @SuppressWarnings("unchecked")
   public VKey<HostHistory> createVKey() {
-    return VKey.create(
-        HostHistory.class, new HostHistoryId(getHostRepoId(), getId()), Key.create(this));
+    return (VKey<HostHistory>) createVKey(Key.create(this));
   }
 
   @PostLoad
@@ -110,12 +111,12 @@ public class HostHistory extends HistoryEntry implements SqlEntity {
 
   // In Datastore, save as a HistoryEntry object regardless of this object's type
   @Override
-  public ImmutableList<DatastoreEntity> toDatastoreEntities() {
-    return ImmutableList.of(asHistoryEntry());
+  public Optional<DatastoreEntity> toDatastoreEntity() {
+    return Optional.of(asHistoryEntry());
   }
 
   /** Class to represent the composite primary key of {@link HostHistory} entity. */
-  static class HostHistoryId extends ImmutableObject implements Serializable {
+  public static class HostHistoryId extends ImmutableObject implements Serializable {
 
     private String hostRepoId;
 
@@ -124,7 +125,7 @@ public class HostHistory extends HistoryEntry implements SqlEntity {
     /** Hibernate requires this default constructor. */
     private HostHistoryId() {}
 
-    HostHistoryId(String hostRepoId, long id) {
+    public HostHistoryId(String hostRepoId, long id) {
       this.hostRepoId = hostRepoId;
       this.id = id;
     }

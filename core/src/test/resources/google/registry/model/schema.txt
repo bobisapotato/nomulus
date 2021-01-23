@@ -8,8 +8,8 @@ class google.registry.model.billing.BillingEvent$Cancellation {
   @Id java.lang.Long id;
   @Parent com.googlecode.objectify.Key<google.registry.model.reporting.HistoryEntry> parent;
   google.registry.model.billing.BillingEvent$Reason reason;
-  google.registry.persistence.VKey<google.registry.model.billing.BillingEvent$OneTime> refOneTime;
-  google.registry.persistence.VKey<google.registry.model.billing.BillingEvent$Recurring> refRecurring;
+  google.registry.persistence.BillingVKey$BillingEventVKey refOneTime;
+  google.registry.persistence.BillingVKey$BillingRecurrenceVKey refRecurring;
   java.lang.String clientId;
   java.lang.String targetId;
   java.util.Set<google.registry.model.billing.BillingEvent$Flag> flags;
@@ -278,8 +278,9 @@ class google.registry.model.domain.DomainHistory {
 }
 class google.registry.model.domain.GracePeriod {
   google.registry.model.domain.rgp.GracePeriodStatus type;
-  google.registry.persistence.VKey<google.registry.model.billing.BillingEvent$OneTime> billingEventOneTime;
-  google.registry.persistence.VKey<google.registry.model.billing.BillingEvent$Recurring> billingEventRecurring;
+  google.registry.persistence.BillingVKey$BillingEventVKey billingEventOneTime;
+  google.registry.persistence.BillingVKey$BillingRecurrenceVKey billingEventRecurring;
+  java.lang.Long gracePeriodId;
   java.lang.String clientId;
   org.joda.time.DateTime expirationTime;
 }
@@ -323,7 +324,7 @@ class google.registry.model.domain.token.AllocationToken {
   google.registry.model.UpdateAutoTimestamp updateTimestamp;
   google.registry.model.common.TimedTransitionProperty<google.registry.model.domain.token.AllocationToken$TokenStatus, google.registry.model.domain.token.AllocationToken$TokenStatusTransition> tokenStatusTransitions;
   google.registry.model.domain.token.AllocationToken$TokenType tokenType;
-  google.registry.persistence.VKey<google.registry.model.reporting.HistoryEntry> redemptionHistoryEntry;
+  google.registry.persistence.DomainHistoryVKey redemptionHistoryEntry;
   int discountYears;
   java.lang.String domainName;
   java.util.Set<java.lang.String> allowedClientIds;
@@ -523,6 +524,7 @@ class google.registry.model.poll.PollMessage$OneTime {
 }
 class google.registry.model.rde.RdeRevision {
   @Id java.lang.String id;
+  google.registry.model.UpdateAutoTimestamp updateTimestamp;
   int revision;
 }
 class google.registry.model.registrar.Registrar {
@@ -885,4 +887,18 @@ enum google.registry.model.transfer.TransferStatus {
   PENDING;
   SERVER_APPROVED;
   SERVER_CANCELLED;
+}
+class google.registry.persistence.BillingVKey$BillingEventVKey {
+  java.lang.Long billingId;
+  java.lang.Long historyRevisionId;
+  java.lang.String repoId;
+}
+class google.registry.persistence.BillingVKey$BillingRecurrenceVKey {
+  java.lang.Long billingId;
+  java.lang.Long historyRevisionId;
+  java.lang.String repoId;
+}
+class google.registry.persistence.DomainHistoryVKey {
+  java.lang.Long historyRevisionId;
+  java.lang.String repoId;
 }

@@ -19,8 +19,8 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static google.registry.config.RegistryConfig.getDomainLabelListCacheDuration;
 import static google.registry.model.registry.label.ReservationType.FULLY_BLOCKED;
+import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
 import static google.registry.util.CollectionUtils.nullToEmpty;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.joda.time.DateTimeZone.UTC;
 
 import com.google.common.base.Splitter;
@@ -38,7 +38,7 @@ import com.googlecode.objectify.mapper.Mapper;
 import google.registry.model.Buildable;
 import google.registry.model.registry.Registry;
 import google.registry.model.registry.label.DomainLabelMetrics.MetricsReservedListMatch;
-import google.registry.schema.replay.DatastoreAndSqlEntity;
+import google.registry.schema.replay.NonReplicatedEntity;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -67,7 +67,7 @@ import org.joda.time.DateTime;
 @Table(indexes = {@Index(columnList = "name", name = "reservedlist_name_idx")})
 public final class ReservedList
     extends BaseDomainLabelList<ReservationType, ReservedList.ReservedListEntry>
-    implements DatastoreAndSqlEntity {
+    implements NonReplicatedEntity {
 
   @Mapify(ReservedListEntry.LabelMapper.class)
   @ElementCollection
@@ -241,12 +241,15 @@ public final class ReservedList
 
   private static LoadingCache<String, ReservedList> cache =
       CacheBuilder.newBuilder()
-          .expireAfterWrite(getDomainLabelListCacheDuration().getMillis(), MILLISECONDS)
+          .expireAfterWrite(
+              java.time.Duration.ofMillis(getDomainLabelListCacheDuration().getMillis()))
           .build(
               new CacheLoader<String, ReservedList>() {
                 @Override
                 public ReservedList load(String listName) {
-                  return ReservedListDualWriteDao.getLatestRevision(listName).orElse(null);
+                  return tm().isOfy()
+                      ? ReservedListDualWriteDao.getLatestRevision(listName).orElse(null)
+                      : ReservedListSqlDao.getLatestRevision(listName).orElse(null);
                 }
               });
 

@@ -54,14 +54,59 @@ public abstract class ImmutableObject implements Cloneable {
   @Target(FIELD)
   public @interface DoNotHydrate {}
 
-  @Ignore
-  @XmlTransient
-  Integer hashCode;
+  /**
+   * Indicates that the field should be ignored when comparing an object in the datastore to the
+   * corresponding object in Cloud SQL.
+   */
+  @Documented
+  @Retention(RUNTIME)
+  @Target(FIELD)
+  public @interface DoNotCompare {}
+
+  /**
+   * Indicates that the field stores a null value to indicate an empty set. This is also used in
+   * object comparison.
+   */
+  @Documented
+  @Retention(RUNTIME)
+  @Target(FIELD)
+  public @interface EmptySetToNull {}
+
+  /**
+   * Indicates that the field does not take part in the immutability contract.
+   *
+   * <p>Certain fields currently get modified by hibernate and there is nothing we can do about it.
+   * As well as violating immutability, this breaks hashing and equality comparisons, so we mark
+   * these fields with this annotation to exclude them from most operations.
+   */
+  @Documented
+  @Retention(RUNTIME)
+  @Target(FIELD)
+  public @interface Insignificant {}
+
+  @Ignore @XmlTransient protected Integer hashCode;
 
   private boolean equalsImmutableObject(ImmutableObject other) {
     return getClass().equals(other.getClass())
         && hashCode() == other.hashCode()
-        && ModelUtils.getFieldValues(this).equals(ModelUtils.getFieldValues(other));
+        && getSignificantFields().equals(other.getSignificantFields());
+  }
+
+  /**
+   * Returns the map of significant fields (fields that we care about for purposes of comparison and
+   * display).
+   *
+   * <p>Isolated into a method so that derived classes can override it.
+   */
+  protected Map<Field, Object> getSignificantFields() {
+    // Can't use streams or ImmutableMap because we can have null values.
+    Map<Field, Object> result = new LinkedHashMap();
+    for (Map.Entry<Field, Object> entry : ModelUtils.getFieldValues(this).entrySet()) {
+      if (!entry.getKey().isAnnotationPresent(Insignificant.class)) {
+        result.put(entry.getKey(), entry.getValue());
+      }
+    }
+    return result;
   }
 
   @Override
@@ -72,7 +117,7 @@ public abstract class ImmutableObject implements Cloneable {
   @Override
   public int hashCode() {
     if (hashCode == null) {
-      hashCode = Arrays.hashCode(ModelUtils.getFieldValues(this).values().toArray());
+      hashCode = Arrays.hashCode(getSignificantFields().values().toArray());
     }
     return hashCode;
   }
@@ -111,7 +156,7 @@ public abstract class ImmutableObject implements Cloneable {
   @Override
   public String toString() {
     NavigableMap<String, Object> sortedFields = new TreeMap<>();
-    for (Entry<Field, Object> entry : ModelUtils.getFieldValues(this).entrySet()) {
+    for (Entry<Field, Object> entry : getSignificantFields().entrySet()) {
       sortedFields.put(entry.getKey().getName(), entry.getValue());
     }
     return toStringHelper(sortedFields);
@@ -121,7 +166,7 @@ public abstract class ImmutableObject implements Cloneable {
   public String toHydratedString() {
     // We can't use ImmutableSortedMap because we need to allow null values.
     NavigableMap<String, Object> sortedFields = new TreeMap<>();
-    for (Entry<Field, Object> entry : ModelUtils.getFieldValues(this).entrySet()) {
+    for (Entry<Field, Object> entry : getSignificantFields().entrySet()) {
       Field field = entry.getKey();
       Object value = entry.getValue();
       sortedFields.put(
@@ -161,7 +206,7 @@ public abstract class ImmutableObject implements Cloneable {
       // LinkedHashMap to preserve field ordering and because ImmutableMap forbids null
       // values.
       Map<String, Object> result = new LinkedHashMap<>();
-      for (Entry<Field, Object> entry : ModelUtils.getFieldValues(o).entrySet()) {
+      for (Entry<Field, Object> entry : ((ImmutableObject) o).getSignificantFields().entrySet()) {
         Field field = entry.getKey();
         if (!field.isAnnotationPresent(IgnoredInDiffableMap.class)) {
           result.put(field.getName(), toMapRecursive(entry.getValue()));

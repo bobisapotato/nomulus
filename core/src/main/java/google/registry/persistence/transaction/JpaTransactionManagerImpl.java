@@ -15,8 +15,10 @@
 package google.registry.persistence.transaction;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
+import static google.registry.model.ofy.DatastoreTransactionManager.toChildHistoryEntryIfPossible;
 import static google.registry.util.PreconditionsUtils.checkArgumentNotNull;
 import static java.util.AbstractMap.SimpleEntry;
 import static java.util.stream.Collectors.joining;
@@ -25,15 +27,22 @@ import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Streams;
 import com.google.common.flogger.FluentLogger;
 import google.registry.config.RegistryConfig;
+import google.registry.model.ImmutableObject;
+import google.registry.model.index.EppResourceIndex;
+import google.registry.model.index.ForeignKeyIndex.ForeignKeyContactIndex;
+import google.registry.model.index.ForeignKeyIndex.ForeignKeyDomainIndex;
+import google.registry.model.index.ForeignKeyIndex.ForeignKeyHostIndex;
+import google.registry.model.ofy.DatastoreTransactionManager;
 import google.registry.persistence.JpaRetries;
 import google.registry.persistence.VKey;
 import google.registry.util.Clock;
 import google.registry.util.Retrier;
 import google.registry.util.SystemSleeper;
 import java.lang.reflect.Field;
-import java.util.Map.Entry;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -54,11 +63,24 @@ public class JpaTransactionManagerImpl implements JpaTransactionManager {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
   private static final Retrier retrier = new Retrier(new SystemSleeper(), 3);
 
+  // The entity of classes in this set will be simply ignored when passed to modification
+  // operations, i.e. insert, put, update and delete. This is to help maintain a single code path
+  // when we switch from ofy() to tm() for the database migration as we don't need have a condition
+  // to exclude the Datastore specific entities when the underlying tm() is jpaTm().
+  // TODO(b/176108270): Remove this property after database migration.
+  private static final ImmutableSet<Class<? extends ImmutableObject>> IGNORED_ENTITY_CLASSES =
+      ImmutableSet.of(
+          EppResourceIndex.class,
+          ForeignKeyContactIndex.class,
+          ForeignKeyDomainIndex.class,
+          ForeignKeyHostIndex.class);
+
   // EntityManagerFactory is thread safe.
   private final EntityManagerFactory emf;
   private final Clock clock;
-  // TODO(shicong): Investigate alternatives for managing transaction information. ThreadLocal adds
-  //  an unnecessary restriction that each request has to be processed by one thread synchronously.
+  // TODO(b/177588434): Investigate alternatives for managing transaction information. ThreadLocal
+  // adds an unnecessary restriction that each request has to be processed by one thread
+  // synchronously.
   private final ThreadLocal<TransactionInfo> transactionInfo =
       ThreadLocal.withInitial(TransactionInfo::new);
 
@@ -96,8 +118,6 @@ public class JpaTransactionManagerImpl implements JpaTransactionManager {
 
   @Override
   public <T> T transact(Supplier<T> work) {
-    // TODO(shicong): Investigate removing transactNew functionality after migration as it may
-    //  be same as this one.
     return retrier.callWithRetry(
         () -> {
           if (inTransaction()) {
@@ -177,6 +197,8 @@ public class JpaTransactionManagerImpl implements JpaTransactionManager {
         });
   }
 
+  // TODO(b/177674699): Remove all transactNew methods as they are same as transact after the
+  // database migration.
   @Override
   public <T> T transactNew(Supplier<T> work) {
     return transact(work);
@@ -226,9 +248,14 @@ public class JpaTransactionManagerImpl implements JpaTransactionManager {
   @Override
   public void insert(Object entity) {
     checkArgumentNotNull(entity, "entity must be specified");
+    if (isEntityOfIgnoredClass(entity)) {
+      return;
+    }
     assertInTransaction();
-    getEntityManager().persist(entity);
-    transactionInfo.get().addUpdate(entity);
+    // Necessary due to the changes in HistoryEntry representation during the migration to SQL
+    Object toPersist = toChildHistoryEntryIfPossible(entity);
+    getEntityManager().persist(toPersist);
+    transactionInfo.get().addUpdate(toPersist);
   }
 
   @Override
@@ -239,11 +266,26 @@ public class JpaTransactionManagerImpl implements JpaTransactionManager {
   }
 
   @Override
+  public void insertWithoutBackup(Object entity) {
+    insert(entity);
+  }
+
+  @Override
+  public void insertAllWithoutBackup(ImmutableCollection<?> entities) {
+    insertAll(entities);
+  }
+
+  @Override
   public void put(Object entity) {
     checkArgumentNotNull(entity, "entity must be specified");
+    if (isEntityOfIgnoredClass(entity)) {
+      return;
+    }
     assertInTransaction();
-    getEntityManager().merge(entity);
-    transactionInfo.get().addUpdate(entity);
+    // Necessary due to the changes in HistoryEntry representation during the migration to SQL
+    Object toPersist = toChildHistoryEntryIfPossible(entity);
+    getEntityManager().merge(toPersist);
+    transactionInfo.get().addUpdate(toPersist);
   }
 
   @Override
@@ -254,12 +296,27 @@ public class JpaTransactionManagerImpl implements JpaTransactionManager {
   }
 
   @Override
+  public void putWithoutBackup(Object entity) {
+    put(entity);
+  }
+
+  @Override
+  public void putAllWithoutBackup(ImmutableCollection<?> entities) {
+    putAll(entities);
+  }
+
+  @Override
   public void update(Object entity) {
     checkArgumentNotNull(entity, "entity must be specified");
+    if (isEntityOfIgnoredClass(entity)) {
+      return;
+    }
     assertInTransaction();
     checkArgument(exists(entity), "Given entity does not exist");
-    getEntityManager().merge(entity);
-    transactionInfo.get().addUpdate(entity);
+    // Necessary due to the changes in HistoryEntry representation during the migration to SQL
+    Object toPersist = toChildHistoryEntryIfPossible(entity);
+    getEntityManager().merge(toPersist);
+    transactionInfo.get().addUpdate(toPersist);
   }
 
   @Override
@@ -267,6 +324,16 @@ public class JpaTransactionManagerImpl implements JpaTransactionManager {
     checkArgumentNotNull(entities, "entities must be specified");
     assertInTransaction();
     entities.forEach(this::update);
+  }
+
+  @Override
+  public void updateWithoutBackup(Object entity) {
+    update(entity);
+  }
+
+  @Override
+  public void updateAllWithoutBackup(ImmutableCollection<?> entities) {
+    updateAll(entities);
   }
 
   @Override
@@ -280,6 +347,7 @@ public class JpaTransactionManagerImpl implements JpaTransactionManager {
   @Override
   public boolean exists(Object entity) {
     checkArgumentNotNull(entity, "entity must be specified");
+    entity = toChildHistoryEntryIfPossible(entity);
     EntityType<?> entityType = getEntityType(entity.getClass());
     ImmutableSet<EntityId> entityIds = getEntityIdsFromEntity(entityType, entity);
     return exists(entityType.getName(), entityIds);
@@ -298,25 +366,15 @@ public class JpaTransactionManagerImpl implements JpaTransactionManager {
   }
 
   @Override
-  public <T> Optional<T> maybeLoad(VKey<T> key) {
+  public <T> Optional<T> loadByKeyIfPresent(VKey<T> key) {
     checkArgumentNotNull(key, "key must be specified");
     assertInTransaction();
     return Optional.ofNullable(getEntityManager().find(key.getKind(), key.getSqlKey()));
   }
 
   @Override
-  public <T> T load(VKey<T> key) {
-    checkArgumentNotNull(key, "key must be specified");
-    assertInTransaction();
-    T result = getEntityManager().find(key.getKind(), key.getSqlKey());
-    if (result == null) {
-      throw new NoSuchElementException(key.toString());
-    }
-    return result;
-  }
-
-  @Override
-  public <T> ImmutableMap<VKey<? extends T>, T> load(Iterable<? extends VKey<? extends T>> keys) {
+  public <T> ImmutableMap<VKey<? extends T>, T> loadByKeysIfPresent(
+      Iterable<? extends VKey<? extends T>> keys) {
     checkArgumentNotNull(keys, "keys must be specified");
     assertInTransaction();
     return StreamSupport.stream(keys.spliterator(), false)
@@ -327,11 +385,64 @@ public class JpaTransactionManagerImpl implements JpaTransactionManager {
                 new SimpleEntry<VKey<? extends T>, T>(
                     key, getEntityManager().find(key.getKind(), key.getSqlKey())))
         .filter(entry -> entry.getValue() != null)
-        .collect(toImmutableMap(Entry::getKey, Entry::getValue));
+        .collect(toImmutableMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
   @Override
-  public <T> ImmutableList<T> loadAll(Class<T> clazz) {
+  public <T> ImmutableList<T> loadByEntitiesIfPresent(Iterable<T> entities) {
+    return Streams.stream(entities)
+        .map(DatastoreTransactionManager::toChildHistoryEntryIfPossible)
+        .filter(this::exists)
+        .map(this::loadByEntity)
+        .collect(toImmutableList());
+  }
+
+  @Override
+  public <T> T loadByKey(VKey<T> key) {
+    checkArgumentNotNull(key, "key must be specified");
+    assertInTransaction();
+    T result = getEntityManager().find(key.getKind(), key.getSqlKey());
+    if (result == null) {
+      throw new NoSuchElementException(key.toString());
+    }
+    return result;
+  }
+
+  @Override
+  public <T> ImmutableMap<VKey<? extends T>, T> loadByKeys(
+      Iterable<? extends VKey<? extends T>> keys) {
+    ImmutableMap<VKey<? extends T>, T> existing = loadByKeysIfPresent(keys);
+    ImmutableSet<? extends VKey<? extends T>> missingKeys =
+        Streams.stream(keys).filter(k -> !existing.containsKey(k)).collect(toImmutableSet());
+    if (!missingKeys.isEmpty()) {
+      throw new NoSuchElementException(
+          String.format(
+              "Expected to find the following VKeys but they were missing: %s.", missingKeys));
+    }
+    return existing;
+  }
+
+  @Override
+  public <T> T loadByEntity(T entity) {
+    checkArgumentNotNull(entity, "entity must be specified");
+    assertInTransaction();
+    entity = toChildHistoryEntryIfPossible(entity);
+    // If the caller requested a HistoryEntry, load the corresponding *History class
+    T possibleChild = toChildHistoryEntryIfPossible(entity);
+    return (T)
+        loadByKey(
+            VKey.createSql(
+                possibleChild.getClass(),
+                emf.getPersistenceUnitUtil().getIdentifier(possibleChild)));
+  }
+
+  @Override
+  public <T> ImmutableList<T> loadByEntities(Iterable<T> entities) {
+    return Streams.stream(entities).map(this::loadByEntity).collect(toImmutableList());
+  }
+
+  @Override
+  public <T> ImmutableList<T> loadAllOf(Class<T> clazz) {
     checkArgumentNotNull(clazz, "clazz must be specified");
     assertInTransaction();
     return ImmutableList.copyOf(
@@ -367,6 +478,41 @@ public class JpaTransactionManagerImpl implements JpaTransactionManager {
   }
 
   @Override
+  public void delete(Object entity) {
+    checkArgumentNotNull(entity, "entity must be specified");
+    if (isEntityOfIgnoredClass(entity)) {
+      return;
+    }
+    assertInTransaction();
+    entity = toChildHistoryEntryIfPossible(entity);
+    Object managedEntity = entity;
+    if (!getEntityManager().contains(entity)) {
+      managedEntity = getEntityManager().merge(entity);
+    }
+    getEntityManager().remove(managedEntity);
+  }
+
+  @Override
+  public void deleteWithoutBackup(VKey<?> key) {
+    delete(key);
+  }
+
+  @Override
+  public void deleteWithoutBackup(Iterable<? extends VKey<?>> keys) {
+    delete(keys);
+  }
+
+  @Override
+  public void deleteWithoutBackup(Object entity) {
+    delete(entity);
+  }
+
+  @Override
+  public void clearSessionCache() {
+    // This is an intended no-op method as there is no session cache in Postgresql.
+  }
+
+  @Override
   public <T> void assertDelete(VKey<T> key) {
     if (internalDelete(key) != 1) {
       throw new IllegalArgumentException(
@@ -386,6 +532,10 @@ public class JpaTransactionManagerImpl implements JpaTransactionManager {
       this.name = name;
       this.value = value;
     }
+  }
+
+  private static boolean isEntityOfIgnoredClass(Object entity) {
+    return IGNORED_ENTITY_CLASSES.contains(entity.getClass());
   }
 
   private static ImmutableSet<EntityId> getEntityIdsFromEntity(

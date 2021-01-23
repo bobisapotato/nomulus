@@ -21,13 +21,12 @@ import static google.registry.model.common.EntityGroupRoot.getCrossTldKey;
 import static google.registry.model.ofy.ObjectifyService.ofy;
 import static google.registry.model.ofy.Ofy.getBaseEntityClassFromEntityOrKey;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.newContactResource;
-import static google.registry.testing.DatastoreHelper.persistActiveContact;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.newContactResource;
+import static google.registry.testing.DatabaseHelper.persistActiveContact;
 import static google.registry.util.DateTimeUtils.END_OF_TIME;
 import static google.registry.util.DateTimeUtils.START_OF_TIME;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -47,7 +46,7 @@ import google.registry.model.eppcommon.Trid;
 import google.registry.model.reporting.HistoryEntry;
 import google.registry.schema.replay.EntityTest.EntityForTesting;
 import google.registry.testing.AppEngineExtension;
-import google.registry.testing.DatastoreHelper;
+import google.registry.testing.DatabaseHelper;
 import google.registry.testing.FakeClock;
 import google.registry.util.SystemClock;
 import java.util.ConcurrentModificationException;
@@ -225,7 +224,7 @@ public class OfyTest {
                 if (firstAttemptTime == null) {
                   // Sleep a bit to ensure that the next attempt is at a new millisecond.
                   firstAttemptTime = tm().getTransactionTime();
-                  sleepUninterruptibly(10, MILLISECONDS);
+                  sleepUninterruptibly(java.time.Duration.ofMillis(10));
                   throw new ConcurrentModificationException();
                 }
                 assertThat(tm().getTransactionTime()).isGreaterThan(firstAttemptTime);
@@ -380,7 +379,7 @@ public class OfyTest {
 
   @Test
   void test_getBaseEntityClassFromEntityOrKey_subclassEntity() {
-    DomainBase domain = DatastoreHelper.newDomainBase("test.tld");
+    DomainBase domain = DatabaseHelper.newDomainBase("test.tld");
     assertThat(getBaseEntityClassFromEntityOrKey(domain)).isEqualTo(DomainBase.class);
     assertThat(getBaseEntityClassFromEntityOrKey(Key.create(domain))).isEqualTo(DomainBase.class);
   }

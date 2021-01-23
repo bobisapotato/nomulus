@@ -23,11 +23,12 @@ import com.googlecode.objectify.annotation.Parent;
 import google.registry.model.ImmutableObject;
 import google.registry.model.annotations.ReportedOn;
 import google.registry.model.common.EntityGroupRoot;
+import google.registry.schema.replay.DatastoreOnlyEntity;
 
 /** Pointer to the latest {@link KmsSecretRevision}. */
 @Entity
 @ReportedOn
-public class KmsSecret extends ImmutableObject {
+public class KmsSecret extends ImmutableObject implements DatastoreOnlyEntity {
 
   /** The unique name of this {@link KmsSecret}. */
   @Id String name;

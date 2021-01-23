@@ -24,7 +24,6 @@ import static google.registry.persistence.transaction.TransactionManagerFactory.
 import static google.registry.util.CollectionUtils.nullToEmpty;
 import static google.registry.util.CollectionUtils.nullToEmptyImmutableCopy;
 import static google.registry.util.DateTimeUtils.END_OF_TIME;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.cache.CacheBuilder;
@@ -149,7 +148,7 @@ public abstract class EppResource extends BackupGroupRoot implements Buildable {
    *
    * @see google.registry.model.translators.CommitLogRevisionsTranslatorFactory
    */
-  @Transient
+  @Transient @DoNotCompare
   ImmutableSortedMap<DateTime, Key<CommitLogManifest>> revisions = ImmutableSortedMap.of();
 
   public String getRepoId() {
@@ -361,13 +360,13 @@ public abstract class EppResource extends BackupGroupRoot implements Buildable {
 
         @Override
         public EppResource load(VKey<? extends EppResource> key) {
-          return tm().doTransactionless(() -> tm().load(key));
+          return tm().doTransactionless(() -> tm().loadByKey(key));
         }
 
         @Override
         public Map<VKey<? extends EppResource>, EppResource> loadAll(
             Iterable<? extends VKey<? extends EppResource>> keys) {
-          return tm().doTransactionless(() -> tm().load(keys));
+          return tm().doTransactionless(() -> tm().loadByKeys(keys));
         }
       };
 
@@ -387,7 +386,7 @@ public abstract class EppResource extends BackupGroupRoot implements Buildable {
   private static LoadingCache<VKey<? extends EppResource>, EppResource> createEppResourcesCache(
       Duration expiry) {
     return CacheBuilder.newBuilder()
-        .expireAfterWrite(expiry.getMillis(), MILLISECONDS)
+        .expireAfterWrite(java.time.Duration.ofMillis(expiry.getMillis()))
         .maximumSize(getEppResourceMaxCachedEntries())
         .build(CACHE_LOADER);
   }
@@ -407,7 +406,7 @@ public abstract class EppResource extends BackupGroupRoot implements Buildable {
   public static ImmutableMap<VKey<? extends EppResource>, EppResource> loadCached(
       Iterable<VKey<? extends EppResource>> keys) {
     if (!RegistryConfig.isEppResourceCachingEnabled()) {
-      return tm().load(keys);
+      return tm().loadByKeys(keys);
     }
     try {
       return cacheEppResources.getAll(keys);
@@ -424,7 +423,7 @@ public abstract class EppResource extends BackupGroupRoot implements Buildable {
    */
   public static <T extends EppResource> T loadCached(VKey<T> key) {
     if (!RegistryConfig.isEppResourceCachingEnabled()) {
-      return tm().load(key);
+      return tm().loadByKey(key);
     }
     try {
       // Safe to cast because loading a Key<T> returns an entity of type T.

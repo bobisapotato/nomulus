@@ -52,6 +52,7 @@ import google.registry.model.registrar.Registrar;
 import google.registry.model.registrar.RegistrarAddress;
 import google.registry.model.registrar.RegistrarContact;
 import google.registry.model.reporting.HistoryEntry;
+import google.registry.model.reporting.HistoryEntryDao;
 import google.registry.persistence.VKey;
 import google.registry.rdap.RdapDataStructures.Event;
 import google.registry.rdap.RdapDataStructures.EventAction;
@@ -342,7 +343,7 @@ public class RdapJsonFormatter {
     // Kick off the database loads of the nameservers that we will need, so it can load
     // asynchronously while we load and process the contacts.
     ImmutableSet<HostResource> loadedHosts =
-        ImmutableSet.copyOf(tm().load(domainBase.getNameservers()).values());
+        ImmutableSet.copyOf(tm().loadByKeys(domainBase.getNameservers()).values());
     // Load the registrant and other contacts and add them to the data.
     Map<Key<ContactResource>, ContactResource> loadedContacts =
         ofy()
@@ -425,11 +426,11 @@ public class RdapJsonFormatter {
     if (outputDataType == OutputDataType.FULL) {
       ImmutableSet.Builder<StatusValue> statuses = new ImmutableSet.Builder<>();
       statuses.addAll(hostResource.getStatusValues());
-      if (isLinked(Key.create(hostResource), getRequestTime())) {
+      if (isLinked(hostResource.createVKey(), getRequestTime())) {
         statuses.add(StatusValue.LINKED);
       }
       if (hostResource.isSubordinate()
-          && tm().load(hostResource.getSuperordinateDomain())
+          && tm().loadByKey(hostResource.getSuperordinateDomain())
               .cloneProjectedAtTime(getRequestTime())
               .getStatusValues()
               .contains(StatusValue.PENDING_TRANSFER)) {
@@ -562,7 +563,7 @@ public class RdapJsonFormatter {
           .statusBuilder()
           .addAll(
               makeStatusValueList(
-                  isLinked(Key.create(contactResource), getRequestTime())
+                  isLinked(contactResource.createVKey(), getRequestTime())
                       ? union(contactResource.getStatusValues(), StatusValue.LINKED)
                       : contactResource.getStatusValues(),
                   false,
@@ -880,8 +881,9 @@ public class RdapJsonFormatter {
     // 2.3.2.3 An event of *eventAction* type *transfer*, with the last date and time that the
     // domain was transferred. The event of *eventAction* type *transfer* MUST be omitted if the
     // domain name has not been transferred since it was created.
-    for (HistoryEntry historyEntry :
-        ofy().load().type(HistoryEntry.class).ancestor(resource).order("modificationTime")) {
+    Iterable<? extends HistoryEntry> historyEntries =
+        HistoryEntryDao.loadHistoryObjectsForResource(resource.createVKey());
+    for (HistoryEntry historyEntry : historyEntries) {
       EventAction rdapEventAction =
           HISTORY_ENTRY_TYPE_TO_RDAP_EVENT_ACTION_MAP.get(historyEntry.getType());
       // Only save the historyEntries if this is a type we care about.
@@ -930,13 +932,9 @@ public class RdapJsonFormatter {
     return eventsBuilder.build();
   }
 
-  /**
-   * Creates an RDAP event object as defined by RFC 7483.
-   */
+  /** Creates an RDAP event object as defined by RFC 7483. */
   private static Event makeEvent(
-      EventAction eventAction,
-      @Nullable String eventActor,
-      DateTime eventDate) {
+      EventAction eventAction, @Nullable String eventActor, DateTime eventDate) {
     Event.Builder builder = Event.builder()
         .setEventAction(eventAction)
         .setEventDate(eventDate);

@@ -14,14 +14,17 @@
 
 package google.registry.model.domain;
 
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static google.registry.util.CollectionUtils.nullToEmptyImmutableCopy;
 
-import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.googlecode.objectify.Key;
 import com.googlecode.objectify.annotation.EntitySubclass;
 import com.googlecode.objectify.annotation.Ignore;
 import google.registry.model.ImmutableObject;
 import google.registry.model.domain.DomainHistory.DomainHistoryId;
+import google.registry.model.domain.GracePeriod.GracePeriodHistory;
+import google.registry.model.domain.secdns.DomainDsDataHistory;
 import google.registry.model.host.HostResource;
 import google.registry.model.reporting.DomainTransactionRecord;
 import google.registry.model.reporting.HistoryEntry;
@@ -40,10 +43,12 @@ import javax.persistence.CascadeType;
 import javax.persistence.Column;
 import javax.persistence.ElementCollection;
 import javax.persistence.Entity;
+import javax.persistence.FetchType;
 import javax.persistence.Id;
 import javax.persistence.IdClass;
 import javax.persistence.Index;
 import javax.persistence.JoinColumn;
+import javax.persistence.JoinColumns;
 import javax.persistence.JoinTable;
 import javax.persistence.OneToMany;
 import javax.persistence.PostLoad;
@@ -75,7 +80,9 @@ public class DomainHistory extends HistoryEntry implements SqlEntity {
   @Id
   @Access(AccessType.PROPERTY)
   public String getDomainRepoId() {
-    return parent.getName();
+    // We need to handle null case here because Hibernate sometimes accesses this method before
+    // parent gets initialized
+    return parent == null ? null : parent.getName();
   }
 
   /** This method is private because it is only used by Hibernate. */
@@ -89,20 +96,62 @@ public class DomainHistory extends HistoryEntry implements SqlEntity {
   // TODO(b/166776754): Investigate if we can reuse domainContent.nsHosts for storing host keys.
   @Ignore
   @ElementCollection
-  @JoinTable(name = "DomainHistoryHost")
+  @JoinTable(
+      name = "DomainHistoryHost",
+      indexes = {
+        @Index(
+            columnList =
+                "domain_history_history_revision_id,domain_history_domain_repo_id,host_repo_id",
+            unique = true),
+      })
+  @ImmutableObject.EmptySetToNull
   @Column(name = "host_repo_id")
   Set<VKey<HostResource>> nsHosts;
+
+  @Ignore
+  @OneToMany(
+      cascade = {CascadeType.ALL},
+      fetch = FetchType.EAGER,
+      orphanRemoval = true)
+  @JoinColumns({
+    @JoinColumn(
+        name = "domainHistoryRevisionId",
+        referencedColumnName = "historyRevisionId",
+        insertable = false,
+        updatable = false),
+    @JoinColumn(
+        name = "domainRepoId",
+        referencedColumnName = "domainRepoId",
+        insertable = false,
+        updatable = false)
+  })
+  Set<DomainDsDataHistory> dsDataHistories = ImmutableSet.of();
+
+  @Ignore
+  @OneToMany(
+      cascade = {CascadeType.ALL},
+      fetch = FetchType.EAGER,
+      orphanRemoval = true)
+  @JoinColumns({
+    @JoinColumn(
+        name = "domainHistoryRevisionId",
+        referencedColumnName = "historyRevisionId",
+        insertable = false,
+        updatable = false),
+    @JoinColumn(
+        name = "domainRepoId",
+        referencedColumnName = "domainRepoId",
+        insertable = false,
+        updatable = false)
+  })
+  Set<GracePeriodHistory> gracePeriodHistories = ImmutableSet.of();
 
   @Override
   @Nullable
   @Access(AccessType.PROPERTY)
   @AttributeOverrides({
-      @AttributeOverride(
-          name = "unit",
-          column = @Column(name = "historyPeriodUnit")),
-      @AttributeOverride(
-          name = "value",
-          column = @Column(name = "historyPeriodValue"))
+    @AttributeOverride(name = "unit", column = @Column(name = "historyPeriodUnit")),
+    @AttributeOverride(name = "value", column = @Column(name = "historyPeriodValue"))
   })
   public Period getPeriod() {
     return super.getPeriod();
@@ -127,14 +176,26 @@ public class DomainHistory extends HistoryEntry implements SqlEntity {
    *
    * <p>This will be empty for any DomainHistory/HistoryEntry generated before this field was added,
    * mid-2017, as well as any action that does not generate billable events (e.g. updates).
+   *
+   * <p>This method is dedicated for Hibernate, external caller should use {@link
+   * #getDomainTransactionRecords()}.
    */
   @Access(AccessType.PROPERTY)
-  @OneToMany(cascade = {CascadeType.ALL})
+  @OneToMany(
+      cascade = {CascadeType.ALL},
+      fetch = FetchType.EAGER)
   @JoinColumn(name = "historyRevisionId", referencedColumnName = "historyRevisionId")
   @JoinColumn(name = "domainRepoId", referencedColumnName = "domainRepoId")
-  @Override
-  public Set<DomainTransactionRecord> getDomainTransactionRecords() {
-    return super.getDomainTransactionRecords();
+  @SuppressWarnings("unused")
+  private Set<DomainTransactionRecord> getInternalDomainTransactionRecords() {
+    return domainTransactionRecords;
+  }
+
+  /** Sets the domain transaction records. This method is dedicated for Hibernate. */
+  @SuppressWarnings("unused")
+  private void setInternalDomainTransactionRecords(
+      Set<DomainTransactionRecord> domainTransactionRecords) {
+    this.domainTransactionRecords = domainTransactionRecords;
   }
 
   @Id
@@ -148,6 +209,11 @@ public class DomainHistory extends HistoryEntry implements SqlEntity {
   /** Returns keys to the {@link HostResource} that are the nameservers for the domain. */
   public Set<VKey<HostResource>> getNsHosts() {
     return nsHosts;
+  }
+
+  /** Returns the collection of {@link DomainDsDataHistory} instances. */
+  public ImmutableSet<DomainDsDataHistory> getDsDataHistories() {
+    return nullToEmptyImmutableCopy(dsDataHistories);
   }
 
   /**
@@ -165,10 +231,14 @@ public class DomainHistory extends HistoryEntry implements SqlEntity {
     return VKey.create(DomainBase.class, getDomainRepoId());
   }
 
+  public Set<GracePeriodHistory> getGracePeriodHistories() {
+    return nullToEmptyImmutableCopy(gracePeriodHistories);
+  }
+
   /** Creates a {@link VKey} instance for this entity. */
+  @SuppressWarnings("unchecked")
   public VKey<DomainHistory> createVKey() {
-    return VKey.create(
-        DomainHistory.class, new DomainHistoryId(getDomainRepoId(), getId()), Key.create(this));
+    return (VKey<DomainHistory>) createVKey(Key.create(this));
   }
 
   @PostLoad
@@ -189,12 +259,12 @@ public class DomainHistory extends HistoryEntry implements SqlEntity {
 
   // In Datastore, save as a HistoryEntry object regardless of this object's type
   @Override
-  public ImmutableList<DatastoreEntity> toDatastoreEntities() {
-    return ImmutableList.of(asHistoryEntry());
+  public Optional<DatastoreEntity> toDatastoreEntity() {
+    return Optional.of(asHistoryEntry());
   }
 
   /** Class to represent the composite primary key of {@link DomainHistory} entity. */
-  static class DomainHistoryId extends ImmutableObject implements Serializable {
+  public static class DomainHistoryId extends ImmutableObject implements Serializable {
 
     private String domainRepoId;
 
@@ -203,7 +273,7 @@ public class DomainHistory extends HistoryEntry implements SqlEntity {
     /** Hibernate requires this default constructor. */
     private DomainHistoryId() {}
 
-    DomainHistoryId(String domainRepoId, long id) {
+    public DomainHistoryId(String domainRepoId, long id) {
       this.domainRepoId = domainRepoId;
       this.id = id;
     }
@@ -266,15 +336,33 @@ public class DomainHistory extends HistoryEntry implements SqlEntity {
 
     public Builder setDomainContent(DomainContent domainContent) {
       getInstance().domainContent = domainContent;
-      if (domainContent != null) {
-        getInstance().nsHosts = nullToEmptyImmutableCopy(domainContent.nsHosts);
-      }
       return this;
     }
 
     public Builder setDomainRepoId(String domainRepoId) {
       getInstance().parent = Key.create(DomainBase.class, domainRepoId);
       return this;
+    }
+
+    @Override
+    public DomainHistory build() {
+      DomainHistory instance = super.build();
+      // TODO(b/171990736): Assert instance.domainContent is not null after database migration.
+      // Note that we cannot assert that instance.domainContent is not null here because this
+      // builder is also used to convert legacy HistoryEntry objects to DomainHistory, when
+      // domainContent is not available.
+      if (instance.domainContent != null) {
+        instance.nsHosts = nullToEmptyImmutableCopy(instance.domainContent.nsHosts);
+        instance.dsDataHistories =
+            nullToEmptyImmutableCopy(instance.domainContent.getDsData()).stream()
+                .map(dsData -> DomainDsDataHistory.createFrom(instance.id, dsData))
+                .collect(toImmutableSet());
+        instance.gracePeriodHistories =
+            nullToEmptyImmutableCopy(instance.domainContent.getGracePeriods()).stream()
+                .map(gracePeriod -> GracePeriodHistory.createFrom(instance.id, gracePeriod))
+                .collect(toImmutableSet());
+      }
+      return instance;
     }
   }
 }

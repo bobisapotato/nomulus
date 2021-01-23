@@ -46,9 +46,12 @@ import google.registry.model.domain.rgp.GracePeriodStatus;
 import google.registry.model.domain.token.AllocationToken;
 import google.registry.model.reporting.HistoryEntry;
 import google.registry.model.transfer.TransferData.TransferServerApproveEntity;
+import google.registry.persistence.BillingVKey.BillingEventVKey;
+import google.registry.persistence.BillingVKey.BillingRecurrenceVKey;
 import google.registry.persistence.VKey;
 import google.registry.persistence.WithLongVKey;
 import google.registry.schema.replay.DatastoreAndSqlEntity;
+import google.registry.schema.replay.DatastoreOnlyEntity;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -118,13 +121,11 @@ public abstract class BillingEvent extends ImmutableObject
   String clientId;
 
   /** Revision id of the entry in DomainHistory table that ths bill belongs to. */
-  // TODO(shicong): Add foreign key constraint when DomainHistory table is generated
   @Ignore
   @Column(nullable = false)
   Long domainHistoryRevisionId;
 
   /** ID of the EPP resource that the bill is for. */
-  // TODO(shicong): Add foreign key constraint when we expand DatastoreHelp for Postgresql
   @Ignore
   @Column(nullable = false)
   String domainRepoId;
@@ -288,10 +289,10 @@ public abstract class BillingEvent extends ImmutableObject
         @javax.persistence.Index(columnList = "eventTime"),
         @javax.persistence.Index(columnList = "billingTime"),
         @javax.persistence.Index(columnList = "syntheticCreationTime"),
-        @javax.persistence.Index(columnList = "allocation_token_id")
+        @javax.persistence.Index(columnList = "allocationToken")
       })
   @AttributeOverride(name = "id", column = @Column(name = "billing_event_id"))
-  @WithLongVKey
+  @WithLongVKey(compositeKey = true)
   public static class OneTime extends BillingEvent implements DatastoreAndSqlEntity {
 
     /** The billable value. */
@@ -331,10 +332,7 @@ public abstract class BillingEvent extends ImmutableObject
 
     /**
      * The {@link AllocationToken} used in the creation of this event, or null if one was not used.
-     *
-     * <p>TODO(shicong): Add foreign key constraint when AllocationToken schema is generated
      */
-    @Column(name = "allocation_token_id")
     @Index
     @Nullable
     VKey<AllocationToken> allocationToken;
@@ -468,7 +466,7 @@ public abstract class BillingEvent extends ImmutableObject
         @javax.persistence.Index(columnList = "recurrence_time_of_year")
       })
   @AttributeOverride(name = "id", column = @Column(name = "billing_recurrence_id"))
-  @WithLongVKey
+  @WithLongVKey(compositeKey = true)
   public static class Recurring extends BillingEvent implements DatastoreAndSqlEntity {
 
     /**
@@ -563,7 +561,7 @@ public abstract class BillingEvent extends ImmutableObject
         @javax.persistence.Index(columnList = "billingTime")
       })
   @AttributeOverride(name = "id", column = @Column(name = "billing_cancellation_id"))
-  @WithLongVKey
+  @WithLongVKey(compositeKey = true)
   public static class Cancellation extends BillingEvent implements DatastoreAndSqlEntity {
 
     /** The billing time of the charge that is being cancelled. */
@@ -576,8 +574,7 @@ public abstract class BillingEvent extends ImmutableObject
      * <p>Although the type is {@link Key} the name "ref" is preserved for historical reasons.
      */
     @IgnoreSave(IfNull.class)
-    @Column(name = "billing_event_id")
-    VKey<BillingEvent.OneTime> refOneTime = null;
+    BillingEventVKey refOneTime = null;
 
     /**
      * The recurring billing event to cancel, or null for non-autorenew cancellations.
@@ -585,15 +582,14 @@ public abstract class BillingEvent extends ImmutableObject
      * <p>Although the type is {@link Key} the name "ref" is preserved for historical reasons.
      */
     @IgnoreSave(IfNull.class)
-    @Column(name = "billing_recurrence_id")
-    VKey<BillingEvent.Recurring> refRecurring = null;
+    BillingRecurrenceVKey refRecurring = null;
 
     public DateTime getBillingTime() {
       return billingTime;
     }
 
     public VKey<? extends BillingEvent> getEventKey() {
-      return firstNonNull(refOneTime, refRecurring);
+      return firstNonNull(refOneTime, refRecurring).createVKey();
     }
 
     /** The mapping from billable grace period types to originating billing event reasons. */
@@ -660,12 +656,12 @@ public abstract class BillingEvent extends ImmutableObject
       }
 
       public Builder setOneTimeEventKey(VKey<BillingEvent.OneTime> eventKey) {
-        getInstance().refOneTime = eventKey;
+        getInstance().refOneTime = BillingEventVKey.create(eventKey);
         return this;
       }
 
       public Builder setRecurringEventKey(VKey<BillingEvent.Recurring> eventKey) {
-        getInstance().refRecurring = eventKey;
+        getInstance().refRecurring = BillingRecurrenceVKey.create(eventKey);
         return this;
       }
 
@@ -684,8 +680,8 @@ public abstract class BillingEvent extends ImmutableObject
   /** An event representing a modification of an existing one-time billing event. */
   @ReportedOn
   @Entity
-  @WithLongVKey
-  public static class Modification extends BillingEvent implements DatastoreAndSqlEntity {
+  @WithLongVKey(compositeKey = true)
+  public static class Modification extends BillingEvent implements DatastoreOnlyEntity {
 
     /** The change in cost that should be applied to the original billing event. */
     Money cost;

@@ -15,11 +15,11 @@
 package google.registry.flows.poll;
 
 import static com.google.common.truth.Truth.assertThat;
-import static google.registry.testing.DatastoreHelper.createHistoryEntryForEppResource;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.newDomainBase;
-import static google.registry.testing.DatastoreHelper.persistActiveContact;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.createHistoryEntryForEppResource;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.newDomainBase;
+import static google.registry.testing.DatabaseHelper.persistActiveContact;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static google.registry.util.DateTimeUtils.END_OF_TIME;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -174,9 +174,7 @@ class PollAckFlowTest extends FlowTestCase<PollAckFlow> {
   void testFailure_noSuchMessage() throws Exception {
     assertTransactionalFlow(true);
     Exception e = assertThrows(MessageDoesNotExistException.class, this::runFlow);
-    assertThat(e)
-        .hasMessageThat()
-        .containsMatch(String.format("(1-3-EXAMPLE-4-%d-2011)", MESSAGE_ID));
+    assertThat(e).hasMessageThat().contains(String.format("(1-3-EXAMPLE-4-%d-2011)", MESSAGE_ID));
   }
 
   @Test
@@ -255,8 +253,6 @@ class PollAckFlowTest extends FlowTestCase<PollAckFlow> {
             .build());
     assertTransactionalFlow(true);
     Exception e = assertThrows(MessageDoesNotExistException.class, this::runFlow);
-    assertThat(e)
-        .hasMessageThat()
-        .containsMatch(String.format("(1-3-EXAMPLE-4-%d-2011)", MESSAGE_ID));
+    assertThat(e).hasMessageThat().contains(String.format("(1-3-EXAMPLE-4-%d-2011)", MESSAGE_ID));
   }
 }

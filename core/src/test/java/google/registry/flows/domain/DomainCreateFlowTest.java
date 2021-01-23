@@ -33,22 +33,22 @@ import static google.registry.model.registry.Registry.TldState.QUIET_PERIOD;
 import static google.registry.model.registry.Registry.TldState.START_DATE_SUNRISE;
 import static google.registry.persistence.transaction.TransactionManagerFactory.tm;
 import static google.registry.pricing.PricingEngineProxy.isDomainPremium;
-import static google.registry.testing.DatastoreHelper.assertBillingEvents;
-import static google.registry.testing.DatastoreHelper.assertPollMessagesForResource;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.createTlds;
-import static google.registry.testing.DatastoreHelper.deleteTld;
-import static google.registry.testing.DatastoreHelper.getHistoryEntries;
-import static google.registry.testing.DatastoreHelper.loadRegistrar;
-import static google.registry.testing.DatastoreHelper.newContactResource;
-import static google.registry.testing.DatastoreHelper.newDomainBase;
-import static google.registry.testing.DatastoreHelper.newHostResource;
-import static google.registry.testing.DatastoreHelper.persistActiveContact;
-import static google.registry.testing.DatastoreHelper.persistActiveDomain;
-import static google.registry.testing.DatastoreHelper.persistActiveHost;
-import static google.registry.testing.DatastoreHelper.persistDeletedDomain;
-import static google.registry.testing.DatastoreHelper.persistReservedList;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.assertBillingEvents;
+import static google.registry.testing.DatabaseHelper.assertPollMessagesForResource;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.createTlds;
+import static google.registry.testing.DatabaseHelper.deleteTld;
+import static google.registry.testing.DatabaseHelper.getHistoryEntries;
+import static google.registry.testing.DatabaseHelper.loadRegistrar;
+import static google.registry.testing.DatabaseHelper.newContactResource;
+import static google.registry.testing.DatabaseHelper.newDomainBase;
+import static google.registry.testing.DatabaseHelper.newHostResource;
+import static google.registry.testing.DatabaseHelper.persistActiveContact;
+import static google.registry.testing.DatabaseHelper.persistActiveDomain;
+import static google.registry.testing.DatabaseHelper.persistActiveHost;
+import static google.registry.testing.DatabaseHelper.persistDeletedDomain;
+import static google.registry.testing.DatabaseHelper.persistReservedList;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static google.registry.testing.DomainBaseSubject.assertAboutDomains;
 import static google.registry.testing.EppExceptionSubject.assertAboutEppExceptions;
 import static google.registry.testing.TaskQueueHelper.assertDnsTasksEnqueued;
@@ -162,7 +162,7 @@ import google.registry.model.reporting.DomainTransactionRecord;
 import google.registry.model.reporting.DomainTransactionRecord.TransactionReportField;
 import google.registry.model.reporting.HistoryEntry;
 import google.registry.monitoring.whitebox.EppMetric;
-import google.registry.persistence.VKey;
+import google.registry.testing.ReplayExtension;
 import google.registry.testing.TaskQueueHelper.TaskMatcher;
 import java.math.BigDecimal;
 import java.util.Map;
@@ -171,7 +171,9 @@ import org.joda.money.Money;
 import org.joda.time.DateTime;
 import org.joda.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 /** Unit tests for {@link DomainCreateFlow}. */
 class DomainCreateFlowTest extends ResourceFlowTestCase<DomainCreateFlow, DomainBase> {
@@ -179,6 +181,10 @@ class DomainCreateFlowTest extends ResourceFlowTestCase<DomainCreateFlow, Domain
   private static final String CLAIMS_KEY = "2013041500/2/6/9/rJ1NrDO92vDsAzf7EQzgjX4R0000000001";
 
   private AllocationToken allocationToken;
+
+  @Order(value = Order.DEFAULT - 2)
+  @RegisterExtension
+  final ReplayExtension replayExtension = ReplayExtension.createWithCompare(clock);
 
   DomainCreateFlowTest() {
     setEppInput("domain_create.xml", ImmutableMap.of("DOMAIN", "example.tld"));
@@ -222,7 +228,6 @@ class DomainCreateFlowTest extends ResourceFlowTestCase<DomainCreateFlow, Domain
     }
     persistActiveContact("jd1234");
     persistActiveContact("sh8013");
-    clock.advanceOneMilli();
   }
 
   private void persistContactsAndHosts() {
@@ -260,7 +265,8 @@ class DomainCreateFlowTest extends ResourceFlowTestCase<DomainCreateFlow, Domain
     HistoryEntry historyEntry = getHistoryEntries(domain).get(0);
     assertAboutDomains()
         .that(domain)
-        .hasRegistrationExpirationTime(tm().load(domain.getAutorenewBillingEvent()).getEventTime())
+        .hasRegistrationExpirationTime(
+            tm().loadByKey(domain.getAutorenewBillingEvent()).getEventTime())
         .and()
         .hasOnlyOneHistoryEntryWhich()
         .hasType(HistoryEntry.Type.DOMAIN_CREATE)
@@ -350,7 +356,7 @@ class DomainCreateFlowTest extends ResourceFlowTestCase<DomainCreateFlow, Domain
         .hasLaunchNotice(null);
     String expectedPayload =
         String.format(
-            "%s,%s,0000001761376042759136-65535,1,2014-09-09T09:09:09.001Z",
+            "%s,%s,0000001761376042759136-65535,1,2014-09-09T09:09:09.016Z",
             reloadResourceByForeignKey().getRepoId(), domainName);
     assertTasksEnqueued(QUEUE_SUNRISE, new TaskMatcher().payload(expectedPayload));
   }
@@ -371,7 +377,7 @@ class DomainCreateFlowTest extends ResourceFlowTestCase<DomainCreateFlow, Domain
             .payload(
                 reloadResourceByForeignKey().getRepoId()
                     + ",example-one.tld,370d0b7c9223372036854775807,1,"
-                    + "2009-08-16T09:00:00.001Z,2009-08-16T09:00:00.000Z");
+                    + "2009-08-16T09:00:00.016Z,2009-08-16T09:00:00.000Z");
     assertTasksEnqueued(QUEUE_CLAIMS, task);
   }
 
@@ -499,7 +505,7 @@ class DomainCreateFlowTest extends ResourceFlowTestCase<DomainCreateFlow, Domain
         new AllocationToken.Builder()
             .setToken("abc123")
             .setTokenType(SINGLE_USE)
-            .setRedemptionHistoryEntry(VKey.create(HistoryEntry.class, 505L, historyEntryKey))
+            .setRedemptionHistoryEntry(HistoryEntry.createVKey(historyEntryKey))
             .build());
     clock.advanceOneMilli();
     EppException thrown =
@@ -519,8 +525,7 @@ class DomainCreateFlowTest extends ResourceFlowTestCase<DomainCreateFlow, Domain
     clock.advanceOneMilli();
     runFlow();
     assertSuccessfulCreate("tld", ImmutableSet.of(), token);
-    HistoryEntry historyEntry =
-        ofy().load().type(HistoryEntry.class).ancestor(reloadResourceByForeignKey()).first().now();
+    HistoryEntry historyEntry = getHistoryEntries(reloadResourceByForeignKey()).get(0);
     assertThat(ofy().load().entity(token).now().getRedemptionHistoryEntry())
         .hasValue(HistoryEntry.createVKey(Key.create(historyEntry)));
   }

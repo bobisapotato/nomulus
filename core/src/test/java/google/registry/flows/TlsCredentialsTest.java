@@ -14,17 +14,25 @@
 
 package google.registry.flows;
 
-import static com.google.common.truth.Truth.assertThat;
-import static google.registry.testing.DatastoreHelper.loadRegistrar;
-import static google.registry.testing.DatastoreHelper.persistResource;
-import static org.joda.time.DateTimeZone.UTC;
+import static com.google.common.truth.Truth8.assertThat;
+import static google.registry.testing.CertificateSamples.SAMPLE_CERT;
+import static google.registry.testing.DatabaseHelper.loadRegistrar;
+import static google.registry.testing.DatabaseHelper.persistResource;
+import static google.registry.util.DateTimeUtils.START_OF_TIME;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedMap;
+import google.registry.flows.TlsCredentials.BadRegistrarIpAddressException;
+import google.registry.flows.TlsCredentials.MissingRegistrarCertificateException;
+import google.registry.flows.TlsCredentials.RegistrarCertificateNotConfiguredException;
+import google.registry.flows.certs.CertificateChecker;
 import google.registry.model.registrar.Registrar;
-import google.registry.request.HttpException.BadRequestException;
 import google.registry.testing.AppEngineExtension;
+import google.registry.testing.FakeClock;
+import google.registry.util.CidrAddressBlock;
 import java.util.Optional;
 import javax.servlet.http.HttpServletRequest;
 import org.joda.time.DateTime;
@@ -38,31 +46,113 @@ final class TlsCredentialsTest {
   final AppEngineExtension appEngine =
       AppEngineExtension.builder().withDatastoreAndCloudSql().build();
 
+  protected final FakeClock clock = new FakeClock();
+
+  private final CertificateChecker certificateChecker =
+      new CertificateChecker(
+          ImmutableSortedMap.of(START_OF_TIME, 825, DateTime.parse("2020-09-01T00:00:00Z"), 398),
+          30,
+          2048,
+          ImmutableSet.of("secp256r1", "secp384r1"),
+          clock);
+
   @Test
   void testProvideClientCertificateHash() {
     HttpServletRequest req = mock(HttpServletRequest.class);
     when(req.getHeader("X-SSL-Certificate")).thenReturn("data");
-    assertThat(TlsCredentials.EppTlsModule.provideClientCertificateHash(req)).isEqualTo("data");
+    assertThat(TlsCredentials.EppTlsModule.provideClientCertificateHash(req)).hasValue("data");
   }
 
   @Test
-  void testProvideClientCertificateHash_missing() {
-    HttpServletRequest req = mock(HttpServletRequest.class);
-    BadRequestException thrown =
-        assertThrows(
-            BadRequestException.class,
-            () -> TlsCredentials.EppTlsModule.provideClientCertificateHash(req));
-    assertThat(thrown).hasMessageThat().contains("Missing header: X-SSL-Certificate");
+  void testClientCertificateAndHash_missing() {
+    TlsCredentials tls =
+        new TlsCredentials(
+            true,
+            Optional.empty(),
+            Optional.empty(),
+            Optional.of("192.168.1.1"),
+            certificateChecker);
+    persistResource(
+        loadRegistrar("TheRegistrar")
+            .asBuilder()
+            .setClientCertificate(SAMPLE_CERT, clock.nowUtc())
+            .build());
+    assertThrows(
+        MissingRegistrarCertificateException.class,
+        () -> tls.validateCertificate(Registrar.loadByClientId("TheRegistrar").get()));
+  }
+
+  @Test
+  void test_missingIpAddress_doesntAllowAccess() {
+    TlsCredentials tls =
+        new TlsCredentials(
+            false, Optional.of("certHash"), Optional.empty(), Optional.empty(), certificateChecker);
+    persistResource(
+        loadRegistrar("TheRegistrar")
+            .asBuilder()
+            .setClientCertificate(SAMPLE_CERT, clock.nowUtc())
+            .setIpAddressAllowList(ImmutableSet.of(CidrAddressBlock.create("3.5.8.13")))
+            .build());
+    assertThrows(
+        BadRegistrarIpAddressException.class,
+        () -> tls.validate(Registrar.loadByClientId("TheRegistrar").get(), "password"));
   }
 
   @Test
   void test_validateCertificate_canBeConfiguredToBypassCertHashes() throws Exception {
-    TlsCredentials tls = new TlsCredentials(false, "certHash", Optional.of("192.168.1.1"));
+    TlsCredentials tls =
+        new TlsCredentials(
+            false,
+            Optional.of("certHash"),
+            Optional.of("cert"),
+            Optional.of("192.168.1.1"),
+            certificateChecker);
     persistResource(
         loadRegistrar("TheRegistrar")
             .asBuilder()
-            .setClientCertificate(null, DateTime.now(UTC))
-            .setFailoverClientCertificate(null, DateTime.now(UTC))
+            .setClientCertificate(null, clock.nowUtc())
+            .setFailoverClientCertificate(null, clock.nowUtc())
+            .build());
+    // This would throw a RegistrarCertificateNotConfiguredException if cert hashes were not
+    // bypassed
+    tls.validateCertificate(Registrar.loadByClientId("TheRegistrar").get());
+  }
+
+  void testProvideClientCertificate() {
+    HttpServletRequest req = mock(HttpServletRequest.class);
+    when(req.getHeader("X-SSL-Full-Certificate")).thenReturn("data");
+    assertThat(TlsCredentials.EppTlsModule.provideClientCertificate(req)).isEqualTo("data");
+  }
+
+  @Test
+  void testClientCertificate_notConfigured() {
+    TlsCredentials tls =
+        new TlsCredentials(
+            true,
+            Optional.of("hash"),
+            Optional.of(SAMPLE_CERT),
+            Optional.of("192.168.1.1"),
+            certificateChecker);
+    persistResource(loadRegistrar("TheRegistrar").asBuilder().build());
+    assertThrows(
+        RegistrarCertificateNotConfiguredException.class,
+        () -> tls.validateCertificate(Registrar.loadByClientId("TheRegistrar").get()));
+  }
+
+  @Test
+  void test_validateCertificate_canBeConfiguredToBypassCerts() throws Exception {
+    TlsCredentials tls =
+        new TlsCredentials(
+            false,
+            Optional.of("certHash"),
+            Optional.of("cert"),
+            Optional.of("192.168.1.1"),
+            certificateChecker);
+    persistResource(
+        loadRegistrar("TheRegistrar")
+            .asBuilder()
+            .setClientCertificate(null, clock.nowUtc())
+            .setFailoverClientCertificate(null, clock.nowUtc())
             .build());
     // This would throw a RegistrarCertificateNotConfiguredException if cert hashes wren't bypassed.
     tls.validateCertificate(Registrar.loadByClientId("TheRegistrar").get());

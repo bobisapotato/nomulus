@@ -16,9 +16,9 @@ package google.registry.rdap;
 
 import static com.google.common.truth.Truth.assertThat;
 import static google.registry.rdap.RdapTestHelper.assertThat;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.persistResource;
-import static google.registry.testing.DatastoreHelper.persistSimpleResources;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.persistSimpleResources;
 import static google.registry.testing.FullFieldsTestEntityHelper.makeAndPersistContactResource;
 import static google.registry.testing.FullFieldsTestEntityHelper.makeAndPersistHostResource;
 import static google.registry.testing.FullFieldsTestEntityHelper.makeDomainBase;
@@ -191,7 +191,6 @@ class RdapJsonFormatterTest {
                     hostResourceIpv6,
                     registrar)
                 .asBuilder()
-                .setCreationClientId("foo")
                 .setCreationTimeForTest(clock.nowUtc().minusMonths(4))
                 .setLastEppUpdateTime(clock.nowUtc().minusMonths(3))
                 .build());
@@ -206,7 +205,6 @@ class RdapJsonFormatterTest {
                     null,
                     registrar)
                 .asBuilder()
-                .setCreationClientId("foo")
                 .setCreationTimeForTest(clock.nowUtc())
                 .setLastEppUpdateTime(null)
                 .build());

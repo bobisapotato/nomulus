@@ -17,6 +17,7 @@ package google.registry.persistence.transaction;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import google.registry.model.ofy.DatastoreTransactionManager;
 import google.registry.persistence.VKey;
 import java.util.NoSuchElementException;
 import java.util.Optional;
@@ -28,17 +29,19 @@ import org.joda.time.DateTime;
  */
 public interface TransactionManager {
 
-  /** Returns {@code true} if the caller is in a transaction.
+  /**
+   * Returns {@code true} if the caller is in a transaction.
    *
-   *  <p>Note that this function is kept for backward compatibility. We will review the use case
-   *  later when adding the cloud sql implementation.
+   * <p>Note that this function is kept for backward compatibility. We will review the use case
+   * later when adding the cloud sql implementation.
    */
   boolean inTransaction();
 
-  /** Throws {@link IllegalStateException} if the caller is not in a transaction.
+  /**
+   * Throws {@link IllegalStateException} if the caller is not in a transaction.
    *
-   *  <p>Note that this function is kept for backward compatibility. We will review the use case
-   *  later when adding the cloud sql implementation.
+   * <p>Note that this function is kept for backward compatibility. We will review the use case
+   * later when adding the cloud sql implementation.
    */
   void assertInTransaction();
 
@@ -57,10 +60,11 @@ public interface TransactionManager {
    */
   <T> T transactNew(Supplier<T> work);
 
-  /** Pauses the current transaction (if any) and executes the work in a new transaction.
+  /**
+   * Pauses the current transaction (if any) and executes the work in a new transaction.
    *
-   *  <p>Note that this function is kept for backward compatibility. We will review the use case
-   *  later when adding the cloud sql implementation.
+   * <p>Note that this function is kept for backward compatibility. We will review the use case
+   * later when adding the cloud sql implementation.
    */
   void transactNew(Runnable work);
 
@@ -72,10 +76,11 @@ public interface TransactionManager {
    */
   <R> R transactNewReadOnly(Supplier<R> work);
 
-  /** Executes the work in a read-only transaction.
+  /**
+   * Executes the work in a read-only transaction.
    *
-   *  <p>Note that this function is kept for backward compatibility. We will review the use case
-   *  later when adding the cloud sql implementation.
+   * <p>Note that this function is kept for backward compatibility. We will review the use case
+   * later when adding the cloud sql implementation.
    */
   void transactNewReadOnly(Runnable work);
 
@@ -91,11 +96,59 @@ public interface TransactionManager {
   /** Persists all new entities in the database, throws exception if any entity already exists. */
   void insertAll(ImmutableCollection<?> entities);
 
+  /**
+   * Persists a new entity in the database without writing any backup if the underlying database is
+   * Datastore.
+   *
+   * <p>This method is for the sake of keeping a single code path when replacing ofy() with tm() in
+   * the application code. When the method is invoked with Datastore, it won't write the commit log
+   * backup; when invoked with Cloud SQL, it behaves the same as the method which doesn't have
+   * "WithoutBackup" in its method name because it is not necessary to have the backup mechanism in
+   * SQL.
+   */
+  void insertWithoutBackup(Object entity);
+
+  /**
+   * Persists all new entities in the database without writing any backup if the underlying database
+   * is Datastore.
+   *
+   * <p>This method is for the sake of keeping a single code path when replacing ofy() with tm() in
+   * the application code. When the method is invoked with Datastore, it won't write the commit log
+   * backup; when invoked with Cloud SQL, it behaves the same as the method which doesn't have
+   * "WithoutBackup" in its method name because it is not necessary to have the backup mechanism in
+   * SQL.
+   */
+  void insertAllWithoutBackup(ImmutableCollection<?> entities);
+
   /** Persists a new entity or update the existing entity in the database. */
   void put(Object entity);
 
   /** Persists all new entities or update the existing entities in the database. */
   void putAll(ImmutableCollection<?> entities);
+
+  /**
+   * Persists a new entity or update the existing entity in the database without writing any backup
+   * if the underlying database is Datastore.
+   *
+   * <p>This method is for the sake of keeping a single code path when replacing ofy() with tm() in
+   * the application code. When the method is invoked with Datastore, it won't write the commit log
+   * backup; when invoked with Cloud SQL, it behaves the same as the method which doesn't have
+   * "WithoutBackup" in its method name because it is not necessary to have the backup mechanism in
+   * SQL.
+   */
+  void putWithoutBackup(Object entity);
+
+  /**
+   * Persists all new entities or update the existing entities in the database without writing any
+   * backup if the underlying database is Datastore.
+   *
+   * <p>This method is for the sake of keeping a single code path when replacing ofy() with tm() in
+   * the application code. When the method is invoked with Datastore, it won't write the commit log
+   * backup; when invoked with Cloud SQL, it behaves the same as the method which doesn't have
+   * "WithoutBackup" in its method name because it is not necessary to have the backup mechanism in
+   * SQL.
+   */
+  void putAllWithoutBackup(ImmutableCollection<?> entities);
 
   /** Updates an entity in the database, throws exception if the entity does not exist. */
   void update(Object entity);
@@ -103,31 +156,123 @@ public interface TransactionManager {
   /** Updates all entities in the database, throws exception if any entity does not exist. */
   void updateAll(ImmutableCollection<?> entities);
 
+  /**
+   * Updates an entity in the database without writing any backup if the underlying database is
+   * Datastore.
+   *
+   * <p>This method is for the sake of keeping a single code path when replacing ofy() with tm() in
+   * the application code. When the method is invoked with Datastore, it won't write the commit log
+   * backup; when invoked with Cloud SQL, it behaves the same as the method which doesn't have
+   * "WithoutBackup" in its method name because it is not necessary to have the backup mechanism in
+   * SQL.
+   */
+  void updateWithoutBackup(Object entity);
+
+  /**
+   * Updates all entities in the database without writing any backup if the underlying database is
+   * Datastore.
+   *
+   * <p>This method is for the sake of keeping a single code path when replacing ofy() with tm() in
+   * the application code. When the method is invoked with Datastore, it won't write the commit log
+   * backup; when invoked with Cloud SQL, it behaves the same as the method which doesn't have
+   * "WithoutBackup" in its method name because it is not necessary to have the backup mechanism in
+   * SQL.
+   */
+  void updateAllWithoutBackup(ImmutableCollection<?> entities);
+
   /** Returns whether the given entity with same ID exists. */
   boolean exists(Object entity);
 
   /** Returns whether the entity of given key exists. */
   <T> boolean exists(VKey<T> key);
 
-  /** Loads the entity by its id, returns empty if the entity doesn't exist. */
-  <T> Optional<T> maybeLoad(VKey<T> key);
-
-  /** Loads the entity by its id, throws NoSuchElementException if it doesn't exist. */
-  <T> T load(VKey<T> key);
+  /** Loads the entity by its key, returns empty if the entity doesn't exist. */
+  <T> Optional<T> loadByKeyIfPresent(VKey<T> key);
 
   /**
-   * Loads the set of entities by their key id.
+   * Loads the set of entities by their keys.
    *
-   * @throws NoSuchElementException if any of the keys are not found.
+   * <p>Nonexistent keys / entities are absent from the resulting map, but no {@link
+   * NoSuchElementException} will be thrown.
    */
-  <T> ImmutableMap<VKey<? extends T>, T> load(Iterable<? extends VKey<? extends T>> keys);
+  <T> ImmutableMap<VKey<? extends T>, T> loadByKeysIfPresent(
+      Iterable<? extends VKey<? extends T>> keys);
 
-  /** Loads all entities of the given type, returns empty if there is no such entity. */
-  <T> ImmutableList<T> loadAll(Class<T> clazz);
+  /**
+   * Loads all given entities from the database if possible.
+   *
+   * <p>Nonexistent entities are absent from the resulting list, but no {@link
+   * NoSuchElementException} will be thrown.
+   */
+  <T> ImmutableList<T> loadByEntitiesIfPresent(Iterable<T> entities);
+
+  /**
+   * Loads the entity by its key.
+   *
+   * @throws NoSuchElementException if this key does not correspond to an existing entity.
+   */
+  <T> T loadByKey(VKey<T> key);
+
+  /**
+   * Loads the set of entities by their keys.
+   *
+   * @throws NoSuchElementException if any of the keys do not correspond to an existing entity.
+   */
+  <T> ImmutableMap<VKey<? extends T>, T> loadByKeys(Iterable<? extends VKey<? extends T>> keys);
+
+  /**
+   * Loads the given entity from the database.
+   *
+   * @throws NoSuchElementException if the entity does not exist in the database.
+   */
+  <T> T loadByEntity(T entity);
+
+  /**
+   * Loads all given entities from the database.
+   *
+   * @throws NoSuchElementException if any of the entities do not exist in the database.
+   */
+  <T> ImmutableList<T> loadByEntities(Iterable<T> entities);
+
+  /**
+   * Returns a stream of all entities of the given type that exist in the database.
+   *
+   * <p>The resulting stream is empty if there are no entities of this type.
+   */
+  <T> ImmutableList<T> loadAllOf(Class<T> clazz);
 
   /** Deletes the entity by its id. */
   void delete(VKey<?> key);
 
   /** Deletes the set of entities by their key id. */
   void delete(Iterable<? extends VKey<?>> keys);
+
+  /** Deletes the given entity from the database. */
+  void delete(Object entity);
+
+  /**
+   * Deletes the entity by its id without writing any backup if the underlying database is
+   * Datastore.
+   */
+  void deleteWithoutBackup(VKey<?> key);
+
+  /**
+   * Deletes the set of entities by their key id without writing any backup if the underlying
+   * database is Datastore.
+   */
+  void deleteWithoutBackup(Iterable<? extends VKey<?>> keys);
+
+  /**
+   * Deletes the given entity from the database without writing any backup if the underlying
+   * database is Datastore.
+   */
+  void deleteWithoutBackup(Object entity);
+
+  /** Clears the session cache if the underlying database is Datastore, otherwise it is a no-op. */
+  void clearSessionCache();
+
+  /** Returns true if the transaction manager is DatastoreTransactionManager. */
+  default boolean isOfy() {
+    return this instanceof DatastoreTransactionManager;
+  }
 }

@@ -21,9 +21,9 @@ import static google.registry.model.domain.token.AllocationToken.TokenStatus.NOT
 import static google.registry.model.domain.token.AllocationToken.TokenStatus.VALID;
 import static google.registry.model.domain.token.AllocationToken.TokenType.SINGLE_USE;
 import static google.registry.model.domain.token.AllocationToken.TokenType.UNLIMITED_USE;
-import static google.registry.testing.DatastoreHelper.createTld;
-import static google.registry.testing.DatastoreHelper.persistActiveDomain;
-import static google.registry.testing.DatastoreHelper.persistResource;
+import static google.registry.testing.DatabaseHelper.createTld;
+import static google.registry.testing.DatabaseHelper.persistActiveDomain;
+import static google.registry.testing.DatabaseHelper.persistResource;
 import static google.registry.testing.EppExceptionSubject.assertAboutEppExceptions;
 import static google.registry.util.DateTimeUtils.START_OF_TIME;
 import static org.joda.time.DateTimeZone.UTC;
@@ -49,7 +49,6 @@ import google.registry.model.domain.token.AllocationToken;
 import google.registry.model.domain.token.AllocationToken.TokenStatus;
 import google.registry.model.registry.Registry;
 import google.registry.model.reporting.HistoryEntry;
-import google.registry.persistence.VKey;
 import google.registry.testing.AppEngineExtension;
 import org.joda.time.DateTime;
 import org.junit.jupiter.api.BeforeEach;
@@ -198,7 +197,7 @@ class AllocationTokenFlowUtilsTest {
         new AllocationToken.Builder()
             .setToken("tokeN")
             .setTokenType(SINGLE_USE)
-            .setRedemptionHistoryEntry(VKey.create(HistoryEntry.class, 101L, historyEntryKey))
+            .setRedemptionHistoryEntry(HistoryEntry.createVKey(historyEntryKey))
             .build());
     assertThat(
             flowUtils

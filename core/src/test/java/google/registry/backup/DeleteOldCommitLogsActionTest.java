@@ -22,7 +22,7 @@ import google.registry.model.contact.ContactResource;
 import google.registry.model.ofy.CommitLogManifest;
 import google.registry.model.ofy.CommitLogMutation;
 import google.registry.model.ofy.Ofy;
-import google.registry.testing.DatastoreHelper;
+import google.registry.testing.DatabaseHelper;
 import google.registry.testing.FakeClock;
 import google.registry.testing.FakeResponse;
 import google.registry.testing.InjectExtension;
@@ -52,9 +52,9 @@ public class DeleteOldCommitLogsActionTest
     action.clock = clock;
     action.maxAge = Duration.standardDays(30);
 
-    ContactResource contact = DatastoreHelper.persistActiveContact("TheRegistrar");
+    ContactResource contact = DatabaseHelper.persistActiveContact("TheRegistrar");
     clock.advanceBy(Duration.standardDays(1));
-    DatastoreHelper.persistResourceWithCommitLog(contact);
+    DatabaseHelper.persistResourceWithCommitLog(contact);
 
     prepareData();
   }
@@ -75,7 +75,7 @@ public class DeleteOldCommitLogsActionTest
         .asBuilder()
         .setEmailAddress(email)
         .build();
-    DatastoreHelper.persistResourceWithCommitLog(contact);
+    DatabaseHelper.persistResourceWithCommitLog(contact);
   }
 
   private void prepareData() {
@@ -95,7 +95,7 @@ public class DeleteOldCommitLogsActionTest
     // Before deleting the unneeded manifests - we have 11 of them (one for the first
     // creation, and 10 more for the mutateContacts)
     assertThat(ofy().load().type(CommitLogManifest.class).count()).isEqualTo(11);
-    // And each DatastoreHelper.persistResourceWithCommitLog creates 3 mutations
+    // And each DatabaseHelper.persistResourceWithCommitLog creates 3 mutations
     assertThat(ofy().load().type(CommitLogMutation.class).count()).isEqualTo(33);
   }
 
@@ -111,7 +111,7 @@ public class DeleteOldCommitLogsActionTest
     assertThat(ImmutableList.copyOf(ofy().load().type(CommitLogManifest.class).keys().iterable()))
         .containsExactlyElementsIn(contact.getRevisions().values());
 
-    // And each DatastoreHelper.persistResourceWithCommitLog creates 3 mutations
+    // And each DatabaseHelper.persistResourceWithCommitLog creates 3 mutations
     assertThat(ofyLoadType(CommitLogMutation.class)).hasSize(contact.getRevisions().size() * 3);
   }
 

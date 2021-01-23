@@ -16,8 +16,8 @@ package google.registry.batch;
 
 import static com.google.common.truth.Truth.assertThat;
 import static google.registry.model.ofy.ObjectifyService.ofy;
-import static google.registry.testing.DatastoreHelper.persistActiveContact;
-import static google.registry.testing.DatastoreHelper.persistContactWithPendingTransfer;
+import static google.registry.testing.DatabaseHelper.persistActiveContact;
+import static google.registry.testing.DatabaseHelper.persistContactWithPendingTransfer;
 import static org.joda.time.DateTimeZone.UTC;
 
 import google.registry.model.contact.ContactResource;
@@ -53,6 +53,19 @@ class ResaveAllEppResourcesActionTest extends MapreduceTestCase<ResaveAllEppReso
     runMapreduce();
     assertThat(ofy().load().entity(contact).now().getUpdateTimestamp().getTimestamp())
         .isGreaterThan(creationTime);
+  }
+
+  @Test
+  void test_fastMode_doesNotResaveEntityWithNoChanges() throws Exception {
+    ContactResource contact = persistActiveContact("test123");
+    DateTime creationTime = contact.getUpdateTimestamp().getTimestamp();
+    assertThat(ofy().load().entity(contact).now().getUpdateTimestamp().getTimestamp())
+        .isEqualTo(creationTime);
+    ofy().clearSessionCache();
+    action.isFast = true;
+    runMapreduce();
+    assertThat(ofy().load().entity(contact).now().getUpdateTimestamp().getTimestamp())
+        .isEqualTo(creationTime);
   }
 
   @Test
